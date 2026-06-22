@@ -70,8 +70,18 @@ func main() {
 		log.Fatalf("resolve server address: %v", err)
 	}
 
+	// Use an explicit Transport with a non-zero connection ID length. draft-21
+	// multipath requires non-zero Source/Destination Connection IDs (the
+	// per-path connection ID carries the path identity); the package-level
+	// DialEarly would otherwise use zero-length client connection IDs.
+	tr := &quic.Transport{
+		Conn:               clientConn,
+		ConnectionIDLength: 8,
+	}
+	defer tr.Close()
+
 	log.Printf("Connecting to QUIC server at %s ...", *serverAddr)
-	conn, err := quic.DialEarly(ctx, clientConn, serverAddrResolved, tlsConf, quicConf)
+	conn, err := tr.DialEarly(ctx, serverAddrResolved, tlsConf, quicConf)
 	if err != nil {
 		log.Fatalf("dial: %v", err)
 	}
