@@ -32,6 +32,7 @@ var (
 	depthHeight   = flag.Int("depth-height", 240, "Depth frame height")
 	rgbWidth      = flag.Int("rgb-width", 640, "RGB frame width")
 	rgbHeight     = flag.Int("rgb-height", 480, "RGB frame height")
+	schedName     = flag.String("scheduler", "pqi", "path scheduler: pqi|min-rtt|round-robin|rssi")
 )
 
 func main() {
@@ -46,11 +47,20 @@ func main() {
 		ServerName:         "mp-quic-server",
 	}
 
+	// Select the path scheduler (PQI by default). Switching schedulers via this
+	// flag, with the rest of the stack identical, supports the fair baseline
+	// comparison (PQI vs min-rtt vs round-robin) requested by the reviewers.
+	sched, err := scheduler.New(*schedName)
+	if err != nil {
+		log.Fatalf("scheduler: %v", err)
+	}
+	log.Printf("Using path scheduler: %s", sched.Name())
+
 	quicConf := &quic.Config{
 		MaxIdleTimeout:      30 * time.Second,
 		KeepAlivePeriod:     10 * time.Second,
 		InitialMaxPathID:    1,
-		PathSelector:        session.NewQuicPathSelector(scheduler.NewPQIScheduler(scheduler.DefaultPQIConfig())),
+		PathSelector:        session.NewQuicPathSelector(sched),
 		Tracer:              qlog.DefaultConnectionTracer,
 	}
 
@@ -246,25 +256,4 @@ func encodeToJPEG(data []byte, width, height int, kind handler.FrameKind) ([]byt
 		return nil, err
 	}
 	return buf.Bytes(), nil
-}
-
-// roundRobinSelector distributes packets across paths evenly.
-type roundRobinSelector struct {
-	mu    sync.Mutex
-	index int
-}
-
-func (s *roundRobinSelector) SelectPath(paths []quic.PathState) quic.PathID {
-	if len(paths) == 0 {
-		return 0
-	}
-	s.mu.Lock()
-	idx := s.index % len(paths)
-	s.index++
-	s.mu.Unlock()
-	return paths[idx].ID
-}
-
-func (s *roundRobinSelector) Name() string {
-	return "round-robin"
 }
