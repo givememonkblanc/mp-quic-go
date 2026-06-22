@@ -2054,6 +2054,19 @@ func (s *connection) applyTransportParameters() {
 	s.connFlowController.UpdateSendWindow(params.InitialMaxData)
 	s.rttStats.SetMaxAckDelay(params.MaxAckDelay)
 	s.connIDGenerator.SetMaxActiveConnIDs(params.ActiveConnectionIDLimit)
+	// Multipath (draft-21): for each negotiated non-zero path, issue a source
+	// connection ID so the peer can open and route packets on that path. Both
+	// endpoints exchange these via PATH_NEW_CONNECTION_ID before a path is used
+	// (§3.1.1). maxPath is the smaller of the two advertised initial_max_path_id
+	// values.
+	if maxPath := min(s.config.InitialMaxPathID, params.InitialMaxPathID); maxPath > 0 {
+		for p := uint32(1); p <= maxPath; p++ {
+			if err := s.connIDGenerator.IssueConnIDForPath(p, 1); err != nil {
+				s.closeLocal(err)
+				return
+			}
+		}
+	}
 	if params.StatelessResetToken != nil {
 		s.connIDManager.SetStatelessResetToken(*params.StatelessResetToken)
 	}
