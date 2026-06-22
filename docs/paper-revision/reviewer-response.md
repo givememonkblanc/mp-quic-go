@@ -189,13 +189,22 @@ All three PQI cost terms are now live: per-path **RTT** (from the path RTT
 estimator), **bandwidth** (cwnd / RTT), and **loss rate** (1-RTT packets declared
 lost / sent, via `sentPacketHandler.LossRate()`).
 
+**DONE — same-stack baseline schedulers (R1.10, R3.4):**
+
+- `scheduler.MinRTTScheduler` (lowest-RTT, classic MP-QUIC baseline),
+  `scheduler.RoundRobinScheduler` (naive/default), `scheduler.New(name)` factory
+  (`pqi|min-rtt|round-robin|rssi`), and a `--scheduler` flag on the client. Only
+  the scheduler differs between runs, so the comparison isolates the PQI benefit.
+  Verified on hardware with `--scheduler min-rtt`.
+
 **Still TODO (code/eval):**
 
-- Add the remaining baseline modes for fair comparison: minRTT scheduler and an
-  SP-QUIC-with-connection-migration mode (round-robin baseline already present).
-  (R1.10, R3.4)
+- SP-QUIC-with-RFC9000-connection-migration mode (so single-path can fail over to
+  5G, for the fair SP-QUIC comparison in R1.10).
 - Wire PQI parameters from `config.yaml` (defaults are used now).
 - Investigate handover latency (R2.10) and normal-state throughput gap (R3.9).
+- Run the comparison campaign (PQI vs min-rtt vs round-robin vs SP-QUIC) with N
+  repetitions and confidence intervals (R3.8).
 
 **Paper/Eval items** remain as listed in §1–§3 (terminology, related work,
 migration/N3IWF, parameter table, claim softening, Wi-Fi spelling, equation
