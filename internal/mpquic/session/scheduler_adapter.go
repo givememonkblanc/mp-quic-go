@@ -32,6 +32,7 @@ func (a *quicPathSelectorAdapter) SelectPath(qp []quic.PathState) quic.PathID {
 		}
 		if ps.HasMetrics {
 			state.RTT = ps.RTT
+			state.LossRate = ps.LossRate
 			state.Bandwidth = ps.Bandwidth
 			state.HasMetrics = true
 		}

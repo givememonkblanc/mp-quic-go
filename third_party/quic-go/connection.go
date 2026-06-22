@@ -732,10 +732,12 @@ func fillPathMetrics(ps *PathState, rtt *utils.RTTStats, sph ackhandler.SentPack
 	}
 	ps.RTT = srtt
 	ps.HasMetrics = true
-	if cw, ok := sph.(interface {
+	if m, ok := sph.(interface {
 		GetCongestionWindow() protocol.ByteCount
+		LossRate() float64
 	}); ok {
-		ps.Bandwidth = float64(cw.GetCongestionWindow()) / srtt.Seconds()
+		ps.Bandwidth = float64(m.GetCongestionWindow()) / srtt.Seconds()
+		ps.LossRate = m.LossRate()
 	}
 }
 

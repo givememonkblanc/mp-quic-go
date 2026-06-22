@@ -79,6 +79,12 @@ type sentPacketHandler struct {
 
 	bytesInFlight protocol.ByteCount
 
+	// Per-path loss accounting for 1-RTT (application-data) packets, used for the
+	// Path Quality Index. appDataSent counts ack-eliciting 1-RTT packets sent;
+	// appDataLost counts those later declared lost.
+	appDataSent uint64
+	appDataLost uint64
+
 	congestion congestion.SendAlgorithmWithDebugInfos
 	rttStats   *utils.RTTStats
 
@@ -258,6 +264,9 @@ func (h *sentPacketHandler) SentPacket(
 		h.bytesInFlight += size
 		if h.numProbesToSend > 0 {
 			h.numProbesToSend--
+		}
+		if encLevel == protocol.Encryption1RTT {
+			h.appDataSent++
 		}
 	}
 	h.congestion.OnPacketSent(t, h.bytesInFlight, pn, size, isAckEliciting)
@@ -653,6 +662,9 @@ func (h *sentPacketHandler) detectLostPackets(now time.Time, encLevel protocol.E
 		}
 		if packetLost {
 			pnSpace.history.DeclareLost(p.PacketNumber)
+			if encLevel == protocol.Encryption1RTT && !p.skippedPacket {
+				h.appDataLost++
+			}
 			if !p.skippedPacket {
 				// the bytes in flight need to be reduced no matter if the frames in this packet will be retransmitted
 				h.removeFromBytesInFlight(p)
@@ -746,6 +758,16 @@ func (h *sentPacketHandler) GetLossDetectionTimeout() time.Time {
 // quality estimation (bandwidth ~= cwnd / smoothed RTT).
 func (h *sentPacketHandler) GetCongestionWindow() protocol.ByteCount {
 	return h.congestion.GetCongestionWindow()
+}
+
+// LossRate returns the fraction of 1-RTT ack-eliciting packets sent on this path
+// that were subsequently declared lost, for path quality estimation. Returns 0
+// before any packets have been sent.
+func (h *sentPacketHandler) LossRate() float64 {
+	if h.appDataSent == 0 {
+		return 0
+	}
+	return float64(h.appDataLost) / float64(h.appDataSent)
 }
 
 func (h *sentPacketHandler) ECNMode(isShortHeaderPacket bool) protocol.ECN {

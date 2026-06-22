@@ -33,9 +33,11 @@ type PathState struct {
 	RSSI      int
 	HasRSSI   bool
 	// Per-path transport metrics for quality-aware scheduling (PQI). RTT is the
-	// path's smoothed round-trip time; Bandwidth is an estimate in bytes/s
-	// (congestion window / RTT). HasMetrics is set once an RTT sample exists.
+	// path's smoothed round-trip time; LossRate is the fraction of 1-RTT packets
+	// declared lost; Bandwidth is an estimate in bytes/s (congestion window /
+	// RTT). HasMetrics is set once an RTT sample exists.
 	RTT        time.Duration
+	LossRate   float64
 	Bandwidth  float64
 	HasMetrics bool
 }
