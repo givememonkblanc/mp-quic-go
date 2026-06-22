@@ -1,0 +1,238 @@
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { height:100%; overflow:hidden; }
+
+body {
+  background:#0d0d1a;
+  color:#c0c8e0;
+  font-family:'Consolas','Courier New',monospace;
+  font-size:13px;
+}
+
+#app {
+  display:flex;
+  flex-direction:column;
+  height:100vh;
+}
+
+/* header */
+header {
+  display:flex;
+  align-items:center;
+  gap:1em;
+  padding:8px 16px;
+  background:#16163a;
+  border-bottom:1px solid #2a2a5a;
+}
+header h1 {
+  font-size:16px;
+  font-weight:400;
+  color:#7c8cd0;
+  letter-spacing:1px;
+}
+#status {
+  font-size:11px;
+  padding:2px 10px;
+  border-radius:3px;
+}
+#status.online { background:#0a3a1a; color:#4f8; }
+#status.offline { background:#3a0a0a; color:#f66; }
+
+/* main layout */
+#main {
+  display:flex;
+  flex:1;
+  overflow:hidden;
+}
+
+/* sidebar */
+#sidebar {
+  width:300px;
+  min-width:300px;
+  overflow-y:auto;
+  background:#12122a;
+  border-right:1px solid #2a2a5a;
+  padding:8px;
+}
+#sidebar section {
+  margin-bottom:12px;
+}
+#sidebar h2 {
+  font-size:11px;
+  text-transform:uppercase;
+  color:#5a6aaa;
+  letter-spacing:1px;
+  margin-bottom:4px;
+  padding-bottom:2px;
+  border-bottom:1px solid #222244;
+}
+.info-row {
+  display:flex;
+  justify-content:space-between;
+  padding:1px 0;
+  font-size:11px;
+}
+.info-row .label { color:#6a7aaa; }
+.mono { color:#8a9ada; font-family:inherit; }
+
+.metric {
+  display:flex;
+  justify-content:space-between;
+  padding:2px 0;
+  font-size:12px;
+}
+.metric .label { color:#6a7aaa; }
+.metric .value { color:#8f8; font-weight:700; }
+
+#path-list .path-entry {
+  display:flex;
+  justify-content:space-between;
+  padding:2px 4px;
+  font-size:11px;
+  border-left:3px solid #444;
+  margin-bottom:2px;
+}
+.path-entry .path-id { color:#6a8aca; }
+.path-entry .path-rssi { color:#fd0; }
+.path-entry .path-status { color:#4a8; }
+
+#event-log { flex:1; }
+#log-entries {
+  font-size:10px;
+  max-height:300px;
+  overflow-y:auto;
+}
+#log-entries .log-line {
+  padding:1px 2px;
+  border-bottom:1px solid #1a1a3a;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.log-line .log-time { color:#5a6a8a; }
+.log-line.packet-sent { color:#4f8; }
+.log-line.packet-recv { color:#48f; }
+.log-line.metrics { color:#8a8; }
+.log-line.acked { color:#666; }
+.log-line.lost { color:#f44; }
+
+/* timeline */
+#timeline-container {
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+}
+#timeline-header {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding:4px 8px;
+  background:#16163a;
+  border-bottom:1px solid #2a2a5a;
+  font-size:11px;
+}
+#time-range { color:#5a6a8a; }
+.controls button {
+  background:#222244;
+  border:1px solid #3a3a6a;
+  color:#8a9ada;
+  padding:2px 10px;
+  cursor:pointer;
+  font-family:inherit;
+  font-size:11px;
+}
+.controls button:hover { background:#2a2a5a; }
+
+#timeline {
+  flex:1;
+  position:relative;
+  overflow:hidden;
+}
+
+/* lane */
+.lane {
+  position:absolute;
+  left:0; right:0;
+  border-bottom:1px solid #1a1a3a;
+}
+.lane-label {
+  position:absolute;
+  left:4px;
+  top:2px;
+  font-size:10px;
+  color:#4a5a8a;
+  z-index:2;
+  pointer-events:none;
+}
+
+/* packet blocks */
+.pkt {
+  position:absolute;
+  height:10px;
+  top:50%;
+  transform:translateY(-50%);
+  border-radius:2px;
+  min-width:3px;
+  opacity:0.85;
+  cursor:pointer;
+  z-index:1;
+}
+.pkt:hover { opacity:1; z-index:3; }
+.pkt.sent { background:#2a8; border:1px solid #4fa; }
+.pkt.recv { background:#26a; border:1px solid #48f; }
+.pkt.acked {
+  width:5px; height:5px;
+  background:#555;
+  border-radius:50%;
+  top:65%;
+}
+.pkt.lost {
+  width:8px; height:8px;
+  background:transparent;
+  border-left:2px solid #f44;
+  transform:translateY(-50%) rotate(45deg);
+}
+.pkt.lost::after {
+  content:'';
+  position:absolute;
+  left:-2px; top:-2px;
+  width:8px; height:8px;
+  border-left:2px solid #f44;
+  transform:rotate(90deg);
+}
+
+/* rssi dots on timeline */
+.rssi-dot {
+  position:absolute;
+  width:4px; height:4px;
+  background:#fd0;
+  border-radius:50%;
+  top:0;
+  z-index:0;
+  opacity:0.6;
+}
+
+/* time axis */
+#time-axis {
+  position:absolute;
+  left:0; right:0;
+  bottom:0;
+  height:18px;
+  border-top:1px solid #2a2a5a;
+}
+.axis-tick {
+  position:absolute;
+  top:0;
+  font-size:9px;
+  color:#3a4a6a;
+  transform:translateX(-50%);
+}
+.axis-tick::before {
+  content:'';
+  position:absolute;
+  top:-4px;
+  left:50%;
+  width:1px;
+  height:4px;
+  background:#2a2a5a;
+}

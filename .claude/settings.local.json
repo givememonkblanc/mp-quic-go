@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go version *)",
+      "Bash(go build *)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(go vet *)",
+      "Bash(timeout 90 go test ./internal/...)",
+      "Bash(make jetson *)",
+      "Bash(git --version)",
+      "Bash(git init *)",
+      "Bash(git config *)",
+      "Bash(git add *)"
+    ]
+  }
+}

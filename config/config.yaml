@@ -1,0 +1,8 @@
+listen_addr: ":4433"
+max_idle_timeout: "30s"
+max_stream_num: 100
+initial_max_path_id: 1
+max_path_id: 4
+server_name: "mp-quic-server"
+cert_file: "config/tls/cert.pem"
+key_file: "config/tls/key.pem"

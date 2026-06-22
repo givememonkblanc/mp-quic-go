@@ -1,0 +1,28 @@
+# Build output
+/bin/
+
+# Compiled binaries at repo root (reproducible via make)
+/server
+/jetson
+/vms
+/qlogviewer
+
+# Go test binaries (go test -c output)
+*.test
+
+# Backup / scratch files
+*.bak
+
+# Runtime data
+/frames/
+
+# Tooling scratch
+/.playwright-mcp/
+
+# Screenshots / captured images at repo root (kept under docs/screenshots/ instead)
+/*.png
+/*.jpg
+/*.jpeg
+
+# OS / editor
+.DS_Store

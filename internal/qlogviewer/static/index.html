@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QUIC Dashboard</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>QUIC Dashboard</h1>
+    <span id="status" class="offline">offline</span>
+  </header>
+  <div id="main">
+    <div id="sidebar">
+      <section id="conn-info">
+        <h2>Connection</h2>
+        <div class="info-row"><span class="label">Local:</span><span id="local-addr" class="mono">-</span></div>
+        <div class="info-row"><span class="label">Remote:</span><span id="remote-addr" class="mono">-</span></div>
+        <div class="info-row"><span class="label">Src CID:</span><span id="src-cid" class="mono">-</span></div>
+        <div class="info-row"><span class="label">Dst CID:</span><span id="dst-cid" class="mono">-</span></div>
+      </section>
+      <section id="metrics-panel">
+        <h2>Metrics</h2>
+        <div class="metric"><span class="label">RTT</span><span id="metric-srtt" class="value">-</span></div>
+        <div class="metric"><span class="label">CWND</span><span id="metric-cwnd" class="value">-</span></div>
+        <div class="metric"><span class="label">In Flight</span><span id="metric-bytes" class="value">-</span></div>
+        <div class="metric"><span class="label">Pkts In Flight</span><span id="metric-pkts" class="value">-</span></div>
+      </section>
+      <section id="path-panel">
+        <h2>Paths</h2>
+        <div id="path-list"></div>
+      </section>
+      <section id="event-log">
+        <h2>Event Log</h2>
+        <div id="log-entries"></div>
+      </section>
+    </div>
+    <div id="timeline-container">
+      <div id="timeline-header">
+        <span id="time-range"></span>
+        <div class="controls">
+          <button id="btn-pause">Pause</button>
+          <button id="btn-clear">Clear</button>
+        </div>
+      </div>
+      <div id="timeline"></div>
+    </div>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

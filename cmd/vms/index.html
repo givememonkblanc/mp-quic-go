@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MP-QUIC VMS</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: system-ui, -apple-system, sans-serif; background: #111; color: #eee; padding: 16px; }
+header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: #1a1a1a; border-radius: 8px; margin-bottom: 16px; border: 1px solid #333; }
+header h1 { font-size: 1.2rem; color: #4caf50; }
+header h1 span { color: #81c784; }
+.status { display: flex; gap: 20px; font-size: 0.85rem; }
+.status-item span { color: #4caf50; font-weight: 600; }
+.grid { display: grid; grid-template-columns: 1fr 350px; gap: 16px; }
+.card { background: #1a1a1a; border-radius: 12px; padding: 16px; border: 1px solid #333; }
+.card h2 { font-size: 0.85rem; margin-bottom: 12px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #333; padding-bottom: 8px; }
+.card .rgb h2 { color: #64b5f6; }
+.card .depth h2 { color: #ffb74d; }
+video { display: block; width: 100%; height: auto; border-radius: 8px; background: #000; }
+.stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.stat { background: #222; padding: 10px; border-radius: 6px; }
+.stat-value { font-size: 1.5rem; font-weight: 700; color: #4caf50; }
+.stat-label { font-size: 0.7rem; color: #666; margin-top: 4px; }
+.stat.rgb .stat-value { color: #64b5f6; }
+.stat.depth .stat-value { color: #ffb74d; }
+.paths-list { display: flex; flex-direction: column; gap: 12px; }
+.path { background: #222; padding: 12px; border-radius: 6px; border-left: 3px solid #4caf50; }
+.path.active { border-left-color: #4caf50; }
+.path-header { display: flex; justify-content: space-between; margin-bottom: 8px; }
+.path-id { font-weight: 700; color: #81c784; }
+.path-status { font-size: 0.75rem; }
+.path-body { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; font-size: 0.75rem; }
+.path-body div { color: #aaa; }
+.path-body div strong { color: #eee; }
+.frame-info { margin-top: 16px; padding: 12px; background: #222; border-radius: 6px; font-size: 0.75rem; }
+.frame-info div { display: flex; justify-content: space-between; margin-bottom: 4px; }
+.frame-info span { color: #888; }
+.frame-info strong { color: #eee; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MP-QUIC <span>VMS</span></h1>
+  <div class="status">
+    <div class="status-item">Status: <span id="status">Waiting...</span></div>
+    <div class="status-item">FPS: <span id="fps" style="font-size:0.85rem;">RGB 0.0 / Depth 0.0</span></div>
+    <div class="status-item">Frames: <span id="frames">0</span></div>
+  </div>
+</header>
+<div class="grid">
+  <div class="left-panel">
+    <div class="card rgb">
+      <h2>RGB</h2>
+      <img id="rgb-img" style="display: block; width: 100%; border-radius: 8px; background: #000; min-height: 200px;" />
+      <div style="margin-top: 8px; font-size: 0.75rem; color: #888;" id="rgb-status">Connecting...</div>
+    </div>
+    <div class="card depth" style="margin-top: 16px;">
+      <h2>Depth</h2>
+      <img id="depth-img" style="display: block; width: 100%; border-radius: 8px; background: #000; min-height: 200px;" />
+    </div>
+  </div>
+  <div class="right-panel">
+    <div class="card">
+      <h2>Statistics</h2>
+      <div class="stats-grid">
+        <div class="stat rgb"><div class="stat-value" id="rbps">0 KB/s</div><div class="stat-label">RGB Bitrate</div></div>
+        <div class="stat depth"><div class="stat-value" id="dbps">0 KB/s</div><div class="stat-label">Depth Bitrate</div></div>
+        <div class="stat"><div class="stat-value" id="packets">0</div><div class="stat-label">Total Frames</div></div>
+        <div class="stat"><div class="stat-value" id="bytes">0</div><div class="stat-label">Traffic / min</div></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top: 16px;">
+      <h2>Connection</h2>
+      <div class="frame-info">
+        <div><span>Source:</span> <strong id="conn-source">Jetson AGX Orin</strong></div>
+        <div><span>Host:</span> <strong id="conn-host">192.168.0.13</strong></div>
+        <div><span>Transport:</span> <strong style="color:#4caf50;">SSH + MJPEG</strong></div>
+        <div><span>RGB Capture:</span> <strong id="conn-rgb-capture">30 fps</strong></div>
+        <div><span>Depth Capture:</span> <strong id="conn-depth-capture">15 fps</strong></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top: 16px; min-height: 130px;">
+      <h2>Frame Timeline</h2>
+      <div style="position: relative; width: 100%; height: 90px;">
+        <canvas id="timelineChart" style="width: 100% !important; height: 100% !important;"></canvas>
+      </div>
+    </div>
+    <div class="card" style="margin-top: 16px;">
+      <h2>Detail</h2>
+      <div class="frame-info">
+        <div><span>Serial:</span> <strong id="frame-serial">-</strong></div>
+        <div><span>RGB Size:</span> <strong id="frame-rgb">-</strong></div>
+        <div><span>Depth Size:</span> <strong id="frame-depth">-</strong></div>
+        <div><span>Timestamp:</span> <strong id="frame-time">-</strong></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const statusEl = document.getElementById('status');
+const fpsEl = document.getElementById('fps');
+const framesEl = document.getElementById('frames');
+const packetsEl = document.getElementById('packets');
+const bytesEl = document.getElementById('bytes');
+const frameSerialEl = document.getElementById('frame-serial');
+const frameRgbEl = document.getElementById('frame-rgb');
+const frameDepthEl = document.getElementById('frame-depth');
+const frameTimeEl = document.getElementById('frame-time');
+
+let timelineChart = null;
+let chartLabels = [];
+
+function initChart() {
+  const ctx = document.getElementById('timelineChart').getContext('2d');
+  // Pre-fill with empty slots so chart is full-width from the start
+  for (let i = 0; i < 20; i++) chartLabels.push('');
+  timelineChart = new Chart(ctx, {
+    type: 'line',
+    data: { labels: chartLabels, datasets: [
+      { label: 'RGB fps', borderColor: '#64b5f6', backgroundColor: 'rgba(100, 181, 246, 0.05)', data: new Array(20).fill(0), fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1.5 },
+      { label: 'Depth fps', borderColor: '#ffb74d', backgroundColor: 'rgba(255, 183, 77, 0.05)', data: new Array(20).fill(0), fill: true, tension: 0.2, pointRadius: 0, borderWidth: 1.5 }
+    ]},
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      scales: { y: { beginAtZero: true, max: 35, grid: { color: '#333', lineWidth: 0.5 }, ticks: { color: '#888', font: { size: 9 } } }, x: { grid: { display: false }, ticks: { display: false } } },
+      plugins: { legend: { labels: { color: '#888', boxWidth: 10, font: { size: 9 } } } }
+    }
+  });
+}
+
+function updateChart(rgbFps, depthFps) {
+  // Shift oldest, push newest — always keeps exactly 20 points
+  chartLabels.shift();
+  chartLabels.push(new Date().toLocaleTimeString());
+  timelineChart.data.datasets[0].data.shift();
+  timelineChart.data.datasets[0].data.push(rgbFps);
+  timelineChart.data.datasets[1].data.shift();
+  timelineChart.data.datasets[1].data.push(depthFps);
+  timelineChart.update('none');
+}
+
+async function fetchStats() {
+  try {
+    const res = await fetch('/api/stats');
+    if (!res.ok) return;
+    const data = await res.json();
+    fpsEl.textContent = 'RGB ' + (data.rgb_fps || 0).toFixed(1) + ' / Depth ' + (data.depth_fps || 0).toFixed(1);
+    framesEl.textContent = data.total_frames;
+    
+    document.getElementById('rbps').textContent = formatBps(data.rgb_bps || 0);
+    document.getElementById('dbps').textContent = formatBps(data.depth_bps || 0);
+    document.getElementById('packets').textContent = (data.total_frames || 0);
+    document.getElementById('bytes').textContent = formatBytes((data.rgb_bps + data.depth_bps) * 60 || 0);
+    
+    document.getElementById('frame-serial').textContent = data.frame_serial || '-';
+    document.getElementById('frame-rgb').textContent = data.frame_rgb_size ? formatBytes(data.frame_rgb_size) : '-';
+    document.getElementById('frame-depth').textContent = data.frame_depth_size ? formatBytes(data.frame_depth_size) : '-';
+    document.getElementById('frame-time').textContent = data.frame_time || '-';
+    
+    updateChart(data.rgb_fps || 0, data.depth_fps || 0);
+  } catch (e) {}
+}
+
+function formatBps(bps) {
+  if (bps < 1024) return bps.toFixed(1) + ' B/s';
+  if (bps < 1048576) return (bps / 1024).toFixed(1) + ' KB/s';
+  return (bps / 1048576).toFixed(2) + ' MB/s';
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  initChart();
+  fetchStats();
+  setInterval(fetchStats, 1000);
+  document.getElementById('rgb-img').src = '/stream/rgb';
+  document.getElementById('depth-img').src = '/stream/depth';
+  statusEl.textContent = 'Streaming - ' + new Date().toLocaleTimeString();
+  statusEl.style.color = '#4caf50';
+});
+</script>
+</body>
+</html>

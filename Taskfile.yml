@@ -1,0 +1,29 @@
+version: '3'
+
+vars:
+  GO: '{{default "go" .GO}}'
+  BINARY: ./bin/server
+  CONFIG: '{{default "./config/config.yaml" .CONFIG}}'
+
+tasks:
+  build:
+    cmds:
+      - mkdir -p ./bin
+      - '{{.GO}} build -o {{.BINARY}} ./cmd/server'
+
+  test:
+    cmds:
+      - '{{.GO}} test ./...'
+
+  run:
+    deps: [build]
+    cmds:
+      - '{{.BINARY}} --config {{.CONFIG}}'
+
+  clean:
+    cmds:
+      - rm -rf ./bin
+
+  tidy:
+    cmds:
+      - '{{.GO}} mod tidy'
