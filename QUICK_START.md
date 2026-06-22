@@ -20,13 +20,22 @@ make jetson     # client  -> ./bin/jetson  (native, this host)
 The repo is checked out on the device at `/home/jetson/mp-quic-go`. Build there
 so the OpenCV/CGO camera provider links against the device's libraries.
 
+> Go (1.22) is installed at `/home/jetson/gopath/go1.22/bin` on the device but is
+> **not on the default PATH** — a non-login SSH shell won't find `go`. Export it
+> before building (verified 2026-06-22):
+>
+> ```bash
+> export PATH=/home/jetson/gopath/go1.22/bin:$PATH
+> ```
+
 ```bash
 # Sync source to the Jetson (if changed)
 rsync -az --exclude bin --exclude .git ./ jetson@192.168.0.13:/home/jetson/mp-quic-go/
 
-# Build natively on the Jetson and run
+# Build natively on the Jetson and run (PATH export is required — see note above)
 ssh jetson@192.168.0.13 \
-  "cd /home/jetson/mp-quic-go && make jetson && \
+  "export PATH=/home/jetson/gopath/go1.22/bin:\$PATH && \
+   cd /home/jetson/mp-quic-go && make jetson && \
    ./bin/jetson --addr 192.168.0.80:4433 --fps 5"
 ```
 
