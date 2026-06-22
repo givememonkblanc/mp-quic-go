@@ -12,12 +12,12 @@ This repository now includes a repo-level draft-21 MP-QUIC implementation layer 
 
 It now includes a **local `quic-go` fork** for the first wire-level slice: draft-21 transport-parameter plumbing and native `internal/wire` multipath frame parsing/serialization.
 
-The fork can now actually transmit over multiple paths simultaneously, using a
-simplified **single shared packet-number-space** model (paths differ only by
-their network 4-tuple). This is verified working end-to-end on hardware. It is
-still **not** wire-compatible with draft-21 multipath, which requires per-path
-packet number spaces and a path-ID-mixed AEAD nonce — see "Current
-implementation boundary" below.
+The fork transmits over multiple paths simultaneously using the **draft-21
+mechanisms**: per-path connection IDs, per-path packet number spaces, the
+path-ID-mixed AEAD nonce (§2.4), and PATH_ACK frames (§4.1). Paths are
+identified by connection ID and may share a 4-tuple. This is verified working
+end-to-end on hardware — see "Current implementation boundary" below for exactly
+what is implemented versus simplified.
 
 ## Layout
 
@@ -57,30 +57,43 @@ Partially transport-native in the local fork:
 - `initial_max_path_id` transport parameter wiring
 - native `internal/wire` parsing/serialization for draft multipath frames
 
-Working multipath transmission (simplified, single packet-number-space model):
+Draft-21 per-path multipath (implemented in the fork, verified on hardware):
 
-- real per-path packet transmission across multiple active paths, verified
-  end-to-end on hardware (Jetson client sending depth+RGB over two paths to a
-  wildcard-bound server)
-- server-side per-path source address control: replies (ACKs/responses) egress
-  from the same local address the peer's path packets arrived on, via
-  per-path `sendConn`s with an explicit `IP_PKTINFO` source address
+- **path-ID AEAD nonce** (§2.4): 1-RTT packets on a non-zero path are sealed and
+  opened with the path ID mixed into the nonce. Verified against the draft's
+  official test vector (`internal/handshake/multipath_nonce_test.go`); path 0 is
+  byte-identical to standard QUIC.
+- **per-path packet number spaces** (§2.4): each path has its own send/receive
+  packet number space (`PathHandler.SentPH`/`RecvPH`); a packet's path is
+  resolved from its Destination Connection ID.
+- **per-path connection IDs** (§3.1, §4.4): each endpoint issues a source
+  connection ID per negotiated path via `PATH_NEW_CONNECTION_ID` after the
+  handshake. The DCID identifies the path on receipt (`PathForConnID`) and the
+  peer's per-path CID is used as the DCID when sending (`GetForPath`).
+- **PATH_ACK frames** (§4.1): per-path acknowledgements, generated from each
+  path's receive handler and bundled into 1-RTT packets (non-ack-eliciting,
+  never retransmitted); the path-0 ACK is suppressed on non-zero paths.
 - additional client paths via `Connection.AddPath`; client-side `PathSelector`
-  (e.g. round-robin) distributes packets across paths
+  (e.g. round-robin) distributes packets across paths; paths may share a 4-tuple
+  and be distinguished purely by connection ID (§5.2).
 
-This uses a **single, shared packet number space** for all paths instead of the
-draft's per-path PN spaces. Paths differ only by their network 4-tuple, which
-sidesteps the missing path-ID AEAD nonce (see below) by keeping every packet
-number globally unique. It is sufficient for practical multipath (notably the
-Jetson uplink), but is **not** wire-compatible with draft-21 multipath.
+Verified end-to-end on hardware: a Jetson client streams depth+RGB over two
+paths (same 4-tuple, distinguished by DCID) to the server, which decrypts path-1
+packets with `OpenForPath` and returns `PATH_ACK[PathID=1]`, with no decryption
+failures and no stall. Bidirectional `PATH_NEW_CONNECTION_ID` exchange confirmed.
 
-Still missing in the fork:
+Still missing / simplified in the fork:
 
-- modified AEAD nonce calculation with path ID
-- true per-path packet number spaces (the implementation deliberately collapses
-  these into one shared space; see above)
-- per-path independent loss recovery / congestion control
-- native connection/path lifecycle enforcement across multiple paths
+- per-path independent loss recovery / congestion control (the per-path PN
+  spaces exist, but recovery tuning is not path-specialised)
+- server-initiated per-path **data** transmission is not exercised by the
+  current app (the server only returns PATH_ACK on path 0); the capability is
+  present once the peer has issued a per-path CID
+- a single-PN-space fallback path (`returnPaths`, `IP_PKTINFO` source-address
+  control) remains for the distinct-local-address scenario and does not conflict
+  with the per-path-CID model
+- full path lifecycle enforcement (PATH_ABANDON / PATH_STATUS state machine in
+  the transport)
 
 RSSI input boundary right now:
 
