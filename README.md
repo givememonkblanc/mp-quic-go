@@ -81,10 +81,27 @@ Draft-21 per-path multipath (implemented in the fork, verified on hardware):
   timer (driven from the run loop); `sendOnPath` respects the path's own
   congestion window.
 
-Verified end-to-end on hardware: a Jetson client streams depth+RGB over two
-paths (same 4-tuple, distinguished by DCID) to the server, which decrypts path-1
-packets with `OpenForPath` and returns `PATH_ACK[PathID=1]`, with no decryption
-failures and no stall. Bidirectional `PATH_NEW_CONNECTION_ID` exchange confirmed.
+### End-to-end verification (hardware)
+
+A Jetson client (ARM64, real depth+RGB cameras) streaming to the server over the
+LAN, with the server's per-path frames inspected via `QUIC_GO_LOG_LEVEL=debug`:
+
+| Scenario | Result |
+| --- | --- |
+| Single path (`--addr`) | Sustained depth+RGB streaming; 1 connection; 0 decryption failures; 0 errors; frames delivered. |
+| Two paths, same 4-tuple (`--addr X --path1 X`, distinguished by DCID) | Sustained streaming (no stall); bidirectional `PATH_NEW_CONNECTION_ID` exchange (client `C1` ↔ server `S1`); server decrypts path-1 packets with `OpenForPath` and returns `PATH_ACK[PathID=1]` (123 frames in a 20 s run); **0 decryption failures, 0 CONNECTION_CLOSE / protocol violations**. |
+
+Test command (no extra IP/interface needed — paths share the 4-tuple and are
+separated by connection ID):
+
+```bash
+./bin/jetson --addr 192.168.0.80:4433 --path1 192.168.0.80:4433 --fps 5
+# server: QUIC_GO_LOG_LEVEL=debug ./bin/server   (PathAckFrame{PathID:1} in the log)
+```
+
+The full `quic-go` fork unit suite passes (`go test ./third_party/quic-go/...`);
+one upstream test (`ListenAddr` to a non-local address) is environment-dependent
+on hosts that can bind arbitrary addresses and is unrelated to multipath.
 
 Still missing / simplified in the fork:
 
