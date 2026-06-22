@@ -81,13 +81,15 @@ func NewPathHandler(
 	srcInfo packetInfo,
 	initialPacketNumber protocol.PacketNumber,
 	initialMaxDatagramSize protocol.ByteCount,
-	rttStats *utils.RTTStats,
 	clientAddressValidated bool,
 	enableECN bool,
 	pers protocol.Perspective,
 	tracer *logging.ConnectionTracer,
 	logger utils.Logger,
 ) (*PathHandler, error) {
+	// Each path gets its own RTT estimator so loss recovery (PTO timing) and the
+	// path's congestion controller are independent per path (draft-21 §5.3/§5.4).
+	rttStats := &utils.RTTStats{}
 	sendConn := newSendConn(rawConn, remoteAddr, srcInfo, logger)
 	sentPH, recvPH := ackhandler.NewAckHandler(
 		initialPacketNumber,

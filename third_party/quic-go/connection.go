@@ -578,7 +578,6 @@ func (s *connection) AddPath(addr net.Addr, id PathID) error {
 		packetInfo{}, // srcInfo: let the OS choose the source address
 		0,            // initialPacketNumber (unused under single PN space)
 		protocol.ByteCount(s.config.InitialPacketSize),
-		s.rttStats,
 		true, // clientAddressValidated: assume validated for additional paths
 		s.conn.capabilities().ECN,
 		s.perspective,
@@ -612,7 +611,6 @@ func (s *connection) ensurePathHandler(pathID uint32, remoteAddr net.Addr, srcIn
 		srcInfo,
 		0,
 		protocol.ByteCount(s.config.InitialPacketSize),
-		s.rttStats,
 		true,
 		s.conn.capabilities().ECN,
 		s.perspective,
@@ -659,7 +657,6 @@ func (s *connection) maybeAddReturnPath(p receivedPacket) {
 		p.info, // srcInfo: pin source address to the local address packets arrived on
 		0,
 		protocol.ByteCount(s.config.InitialPacketSize),
-		s.rttStats,
 		true,
 		s.conn.capabilities().ECN,
 		s.perspective,
@@ -853,6 +850,19 @@ runLoop:
 			// Check it before trying to send packets.
 			if err := s.sentPacketHandler.OnLossDetectionTimeout(); err != nil {
 				s.closeLocal(err)
+			}
+		}
+		// Drive each path's independent loss detection / PTO. Each path has its
+		// own RTT estimate and packet number space, so loss recovery fires per
+		// path (draft-21 §5.6/§5.7); lost frames are re-queued for retransmission.
+		for _, ph := range s.pathHandlers {
+			if ph.SentPH == nil {
+				continue
+			}
+			if t := ph.SentPH.GetLossDetectionTimeout(); !t.IsZero() && t.Before(now) {
+				if err := ph.SentPH.OnLossDetectionTimeout(); err != nil {
+					s.closeLocal(err)
+				}
 			}
 		}
 
@@ -2543,22 +2553,21 @@ func (s *connection) sendOnExtraPaths(now time.Time) error {
 
 // sendOnPath sends a single packet on the given path's send queue.
 //
-// Single packet-number-space multipath: all paths share the main connection's
-// packet number space (s.sentPacketHandler) and ACK source. This is required
-// because the fork does not yet implement the multipath AEAD nonce (which mixes
-// the path ID into the nonce); without it, a per-path PN space restarting at 0
-// would reuse packet numbers across paths, causing AEAD nonce reuse and making
-// the peer drop the packets as duplicates. Sharing one PN space keeps every
-// packet number globally unique, so loss recovery and ACKs work across paths.
-// The only per-path state used here is the send queue (ph.SendQ), whose sendConn
-// carries the correct source/destination address for this path.
+// draft-21 per-path send: the packet is packed from the path's own packet number
+// space (ph.SentPH), sealed with the path-ID AEAD nonce (via packer.SetPath), and
+// addressed with the peer's per-path connection ID. The path's own congestion
+// controller and RTT estimate gate and pace the send, independently of other
+// paths (§5.3/§5.4).
 func (s *connection) sendOnPath(ph *PathHandler, now time.Time) error {
-	// draft-21 per-path send: a path can only carry traffic once the peer has
-	// issued a connection ID for it (§3.1); use that as the Destination
-	// Connection ID. Pack from the path's own packet number space and seal with
-	// the path-ID AEAD nonce (via packer.SetPath).
+	// A path can only carry traffic once the peer has issued a connection ID for
+	// it (§3.1); use that as the Destination Connection ID.
 	destConnID, ok := s.connIDManager.GetForPath(ph.ID)
 	if !ok {
+		return nil
+	}
+	// Respect this path's independent congestion control: skip if its congestion
+	// window (or anti-amplification limit) currently allows no new data.
+	if ph.SentPH.SendMode(now) == ackhandler.SendNone {
 		return nil
 	}
 	s.packer.SetPacketNumberManager(ph.SentPH)
