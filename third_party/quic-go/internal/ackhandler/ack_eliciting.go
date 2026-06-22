@@ -5,8 +5,9 @@ import "github.com/quic-go/quic-go/internal/wire"
 // IsFrameAckEliciting returns true if the frame is ack-eliciting.
 func IsFrameAckEliciting(f wire.Frame) bool {
 	_, isAck := f.(*wire.AckFrame)
+	_, isPathAck := f.(*wire.PathAckFrame)
 	_, isConnectionClose := f.(*wire.ConnectionCloseFrame)
-	return !isAck && !isConnectionClose
+	return !isAck && !isPathAck && !isConnectionClose
 }
 
 // HasAckElicitingFrames returns true if at least one frame is ack-eliciting.

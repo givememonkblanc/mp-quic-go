@@ -353,15 +353,15 @@ func (c *MockPackerSetTokenCall) DoAndReturn(f func([]byte)) *MockPackerSetToken
 }
 
 // SetPath mocks base method.
-func (m *MockPacker) SetPath(arg0 uint32) {
+func (m *MockPacker) SetPath(arg0 uint32, arg1 protocol.ConnectionID) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "SetPath", arg0)
+	m.ctrl.Call(m, "SetPath", arg0, arg1)
 }
 
 // SetPath indicates an expected call of SetPath.
-func (mr *MockPackerMockRecorder) SetPath(arg0 any) *gomock.Call {
+func (mr *MockPackerMockRecorder) SetPath(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetPath", reflect.TypeOf((*MockPacker)(nil).SetPath), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetPath", reflect.TypeOf((*MockPacker)(nil).SetPath), arg0, arg1)
 }
 
 // SetPacketNumberManager mocks base method.

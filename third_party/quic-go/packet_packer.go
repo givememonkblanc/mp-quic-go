@@ -28,7 +28,7 @@ type packer interface {
 
 	SetToken([]byte)
 	SetPacketNumberManager(pm packetNumberManager)
-	SetPath(pathID uint32)
+	SetPath(pathID uint32, destConnID protocol.ConnectionID)
 }
 
 type sealer interface {
@@ -140,8 +140,14 @@ type packetPacker struct {
 	// pathID is the multipath path the next 1-RTT packet is being packed for.
 	// 0 means the primary path (standard QUIC, byte-identical). When non-zero,
 	// 1-RTT packets are sealed with the draft-21 path-ID AEAD nonce (§2.4) so the
-	// per-path packet number space does not reuse nonces across paths.
-	pathID uint32
+	// per-path packet number space does not reuse nonces across paths, and the
+	// Destination Connection ID is the peer's connection ID for that path.
+	pathID         uint32
+	pathDestConnID protocol.ConnectionID
+
+	// getPathAcks yields pending PATH_ACK frames for non-zero paths, to be
+	// bundled into outgoing 1-RTT packets (draft-21 §4.1). May be nil.
+	getPathAcks func(maxSize protocol.ByteCount, v protocol.Version) []*wire.PathAckFrame
 }
 
 // pathSealer is the subset of the 1-RTT AEAD that seals with a path-ID nonce.
@@ -190,11 +196,14 @@ func (p *packetPacker) SetPacketNumberManager(pm packetNumberManager) {
 	p.pnManager = pm
 }
 
-// SetPath selects the multipath path subsequent 1-RTT packets are packed for.
-// Path 0 (the default) uses standard QUIC sealing; a non-zero path uses the
-// draft-21 path-ID AEAD nonce. Callers must reset to 0 after packing a path.
-func (p *packetPacker) SetPath(pathID uint32) {
+// SetPath selects the multipath path subsequent 1-RTT packets are packed for,
+// and the peer connection ID to use as the Destination Connection ID on that
+// path. Path 0 (the default) uses standard QUIC sealing and the regular DCID;
+// a non-zero path uses the draft-21 path-ID AEAD nonce and the given DCID.
+// Callers must reset to 0 after packing a path.
+func (p *packetPacker) SetPath(pathID uint32, destConnID protocol.ConnectionID) {
 	p.pathID = pathID
+	p.pathDestConnID = destConnID
 }
 
 // PackConnectionClose packs a packet that closes the connection with a transport error.
@@ -489,6 +498,9 @@ func (p *packetPacker) appendPacket(buf *packetBuffer, onlyAck bool, maxPacketSi
 	}
 	pn, pnLen := p.pnManager.PeekPacketNumber(protocol.Encryption1RTT)
 	connID := p.getDestConnID()
+	if p.pathID != 0 {
+		connID = p.pathDestConnID
+	}
 	hdrLen := wire.ShortHeaderLen(connID, pnLen)
 	pl := p.maybeGetShortHeaderPacket(sealer, hdrLen, maxPacketSize, onlyAck, true, v)
 	if pl.length == 0 {
@@ -622,7 +634,10 @@ func (p *packetPacker) composeNextPacket(maxFrameSize protocol.ByteCount, onlyAc
 
 	var hasAck bool
 	var pl payload
-	if ackAllowed {
+	// The main ACK (path 0 PN space) is only carried on path 0. On a non-zero
+	// path, acknowledgements are carried as PATH_ACK frames (added below), so a
+	// peer never misprocesses a path-0 ACK against a per-path PN space.
+	if ackAllowed && p.pathID == 0 {
 		if ack := p.acks.GetAckFrame(protocol.Encryption1RTT, !hasRetransmission && !hasData); ack != nil {
 			pl.ack = ack
 			pl.length += ack.Length(v)
@@ -644,6 +659,15 @@ func (p *packetPacker) composeNextPacket(maxFrameSize protocol.ByteCount, onlyAc
 				p.datagramQueue.Pop()
 			}
 			// If the DATAGRAM frame was too large and the packet contained an ACK, we'll try to send it out later.
+		}
+	}
+
+	// Bundle pending PATH_ACK frames for non-zero paths (draft-21 §4.1). These are
+	// not ack-eliciting and are never retransmitted (no Handler), like ACK frames.
+	if p.getPathAcks != nil {
+		for _, pa := range p.getPathAcks(maxFrameSize-pl.length, v) {
+			pl.frames = append(pl.frames, ackhandler.Frame{Frame: pa})
+			pl.length += pa.Length(v)
 		}
 	}
 

@@ -349,6 +349,9 @@ var newConnection = func(
 	)
 	s.cryptoStreamHandler = cs
 	s.packer = newPacketPacker(srcConnID, s.connIDManager.Get, s.initialStream, s.handshakeStream, s.sentPacketHandler, s.retransmissionQueue, cs, s.framer, s.receivedPacketHandler, s.datagramQueue, s.perspective)
+	if pp, ok := s.packer.(*packetPacker); ok {
+		pp.getPathAcks = s.getPathAckFrames
+	}
 	s.unpacker = newPacketUnpacker(cs, s.srcConnIDLen)
 	s.cryptoStreamManager = newCryptoStreamManager(s.initialStream, s.handshakeStream, s.oneRTTStream)
 	if conf.PathSelector != nil {
@@ -461,6 +464,9 @@ var newClientConnection = func(
 	s.cryptoStreamManager = newCryptoStreamManager(s.initialStream, s.handshakeStream, oneRTTStream)
 	s.unpacker = newPacketUnpacker(cs, s.srcConnIDLen)
 	s.packer = newPacketPacker(srcConnID, s.connIDManager.Get, s.initialStream, s.handshakeStream, s.sentPacketHandler, s.retransmissionQueue, cs, s.framer, s.receivedPacketHandler, s.datagramQueue, s.perspective)
+	if pp, ok := s.packer.(*packetPacker); ok {
+		pp.getPathAcks = s.getPathAckFrames
+	}
 	if len(tlsConf.ServerName) > 0 {
 		s.tokenStoreKey = tlsConf.ServerName
 	} else {
@@ -585,6 +591,40 @@ func (s *connection) AddPath(addr net.Addr, id PathID) error {
 
 	s.AddPathHandler(handler)
 	return nil
+}
+
+// ensurePathHandler returns the PathHandler for a non-zero path, lazily creating
+// one if needed. The client creates handlers via AddPath; the server creates one
+// on demand the first time it receives a packet on a path (identified by the
+// Destination Connection ID). srcInfo pins the source address for any replies on
+// the path. Each handler owns the path's packet number space (draft-21 §2.4).
+func (s *connection) ensurePathHandler(pathID uint32, remoteAddr net.Addr, srcInfo packetInfo) *PathHandler {
+	if ph, ok := s.pathHandlers[pathID]; ok {
+		return ph
+	}
+	if s.mainRawConn == nil {
+		return nil
+	}
+	ph, err := NewPathHandler(
+		pathID,
+		s.mainRawConn,
+		remoteAddr,
+		srcInfo,
+		0,
+		protocol.ByteCount(s.config.InitialPacketSize),
+		s.rttStats,
+		true,
+		s.conn.capabilities().ECN,
+		s.perspective,
+		s.tracer,
+		s.logger,
+	)
+	if err != nil {
+		s.logger.Errorf("failed to create path handler %d: %v", pathID, err)
+		return nil
+	}
+	s.AddPathHandler(ph)
+	return ph
 }
 
 // maybeAddReturnPath ensures the server has a return path for the local address
@@ -1135,9 +1175,17 @@ func (s *connection) handleShortHeaderPacket(p receivedPacket) bool {
 		wire.LogShortHeader(s.logger, destConnID, pn, pnLen, keyPhase)
 	}
 
-	// Use per-path ReceivedPacketHandler and SentPacketHandler for multi-path demux
-	recvPH := s.receivedPacketHandlerForAddr(p.remoteAddr)
-	sentPH := s.sentPacketHandlerForAddr(p.remoteAddr)
+	// Multipath: a non-zero path uses its own packet number space, so received
+	// packets on that path are tracked by that path's handlers (draft-21 §2.4).
+	// Path 0 uses the main handlers, unchanged.
+	recvPH := s.receivedPacketHandler
+	sentPH := s.sentPacketHandler
+	if pktPathID != 0 {
+		if ph := s.ensurePathHandler(pktPathID, p.remoteAddr, p.info); ph != nil {
+			recvPH = ph.RecvPH
+			sentPH = ph.SentPH
+		}
+	}
 	if recvPH.IsPotentiallyDuplicate(pn, protocol.Encryption1RTT) {
 		s.logger.Debugf("Dropping (potentially) duplicate packet.")
 		if s.tracer != nil && s.tracer.DroppedPacket != nil {
@@ -1601,6 +1649,8 @@ func (s *connection) handleFrame(f wire.Frame, encLevel protocol.EncryptionLevel
 		err = s.connIDManager.AddPath(frame)
 	case *wire.PathRetireConnectionIDFrame:
 		err = s.connIDGenerator.RetireForPath(PathID(frame.PathID), frame.SequenceNumber)
+	case *wire.PathAckFrame:
+		err = s.handlePathAckFrame(frame)
 	case *wire.HandshakeDoneFrame:
 		err = s.handleHandshakeDoneFrame()
 	case *wire.DatagramFrame:
@@ -1785,6 +1835,16 @@ func (s *connection) handleHandshakeDoneFrame() error {
 		return s.handleHandshakeConfirmed()
 	}
 	return nil
+}
+
+// handlePathAckFrame processes a PATH_ACK frame (draft-21 §4.1) against the
+// acknowledged path's own sent-packet handler / packet number space.
+func (s *connection) handlePathAckFrame(frame *wire.PathAckFrame) error {
+	ph, ok := s.pathHandlers[uint32(frame.PathID)]
+	if !ok || ph.SentPH == nil {
+		return nil // unknown or not-yet-established path
+	}
+	return s.handleAckFrame(&frame.AckFrame, protocol.Encryption1RTT, ph.SentPH)
 }
 
 func (s *connection) handleAckFrame(frame *wire.AckFrame, encLevel protocol.EncryptionLevel, sentPH ackhandler.SentPacketHandler) error {
@@ -2493,7 +2553,22 @@ func (s *connection) sendOnExtraPaths(now time.Time) error {
 // The only per-path state used here is the send queue (ph.SendQ), whose sendConn
 // carries the correct source/destination address for this path.
 func (s *connection) sendOnPath(ph *PathHandler, now time.Time) error {
-	ecn := s.sentPacketHandler.ECNMode(true)
+	// draft-21 per-path send: a path can only carry traffic once the peer has
+	// issued a connection ID for it (§3.1); use that as the Destination
+	// Connection ID. Pack from the path's own packet number space and seal with
+	// the path-ID AEAD nonce (via packer.SetPath).
+	destConnID, ok := s.connIDManager.GetForPath(ph.ID)
+	if !ok {
+		return nil
+	}
+	s.packer.SetPacketNumberManager(ph.SentPH)
+	s.packer.SetPath(ph.ID, destConnID)
+	defer func() {
+		s.packer.SetPacketNumberManager(s.sentPacketHandler)
+		s.packer.SetPath(0, protocol.ConnectionID{})
+	}()
+
+	ecn := ph.SentPH.ECNMode(true)
 	buf := getPacketBuffer()
 	p, err := s.packer.AppendPacket(buf, s.maxPacketSize(), s.version)
 	if err != nil {
@@ -2514,11 +2589,40 @@ func (s *connection) sendOnPath(ph *PathHandler, now time.Time) error {
 	if p.Ack != nil {
 		largestAcked = p.Ack.LargestAcked()
 	}
-	s.sentPacketHandler.SentPacket(now, p.PacketNumber, largestAcked, p.StreamFrames, p.Frames, protocol.Encryption1RTT, ecn, p.Length, p.IsPathMTUProbePacket)
+	ph.SentPH.SentPacket(now, p.PacketNumber, largestAcked, p.StreamFrames, p.Frames, protocol.Encryption1RTT, ecn, p.Length, p.IsPathMTUProbePacket)
 	s.connIDManager.SentPacket()
 
 	ph.SendQ.Send(buf, 0, ecn)
 	return nil
+}
+
+// getPathAckFrames returns pending PATH_ACK frames for every non-zero path that
+// has packets to acknowledge in its own packet number space (draft-21 §4.1).
+// These are bundled into outgoing 1-RTT packets (typically on path 0) by the
+// packer. Called from the send loop goroutine.
+func (s *connection) getPathAckFrames(maxSize protocol.ByteCount, v protocol.Version) []*wire.PathAckFrame {
+	if len(s.pathHandlers) == 0 {
+		return nil
+	}
+	var frames []*wire.PathAckFrame
+	var used protocol.ByteCount
+	for _, ph := range s.pathHandlers {
+		if ph.RecvPH == nil {
+			continue
+		}
+		ack := ph.RecvPH.GetAckFrame(protocol.Encryption1RTT, true)
+		if ack == nil {
+			continue
+		}
+		pa := &wire.PathAckFrame{PathID: uint64(ph.ID), AckFrame: *ack}
+		sz := pa.Length(v)
+		if used+sz > maxSize {
+			break
+		}
+		frames = append(frames, pa)
+		used += sz
+	}
+	return frames
 }
 
 func (s *connection) sendConnectionClose(e error) ([]byte, error) {
