@@ -197,14 +197,17 @@ lost / sent, via `sentPacketHandler.LossRate()`).
   the scheduler differs between runs, so the comparison isolates the PQI benefit.
   Verified on hardware with `--scheduler min-rtt`.
 
+PQI parameters are now tunable from the client (`--pqi-alpha/-beta/-gamma`,
+`--pqi-lambda`, `--pqi-window`, `--pqi-tdeg`, `--pqi-margin`, `--pqi-stable`),
+defaults matching the paper — reproducible (R3.3).
+
 **Still TODO (code/eval):**
 
 - SP-QUIC-with-RFC9000-connection-migration mode (so single-path can fail over to
   5G, for the fair SP-QUIC comparison in R1.10).
-- Wire PQI parameters from `config.yaml` (defaults are used now).
+- Comparison harness: run PQI vs min-rtt vs round-robin with N repetitions and
+  report mean ± CI (R3.8), feeding the new evaluation tables.
 - Investigate handover latency (R2.10) and normal-state throughput gap (R3.9).
-- Run the comparison campaign (PQI vs min-rtt vs round-robin vs SP-QUIC) with N
-  repetitions and confidence intervals (R3.8).
 
 **Paper/Eval items** remain as listed in §1–§3 (terminology, related work,
 migration/N3IWF, parameter table, claim softening, Wi-Fi spelling, equation
