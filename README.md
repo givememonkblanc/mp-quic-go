@@ -73,9 +73,12 @@ Draft-21 per-path multipath (implemented in the fork, verified on hardware):
 - **PATH_ACK frames** (§4.1): per-path acknowledgements, generated from each
   path's receive handler and bundled into 1-RTT packets (non-ack-eliciting,
   never retransmitted); the path-0 ACK is suppressed on non-zero paths.
-- additional client paths via `Connection.AddPath`; client-side `PathSelector`
-  (e.g. round-robin) distributes packets across paths; paths may share a 4-tuple
-  and be distinguished purely by connection ID (§5.2).
+- additional client paths via `Connection.AddPath`; paths may share a 4-tuple and
+  be distinguished purely by connection ID (§5.2).
+- pluggable path schedulers (`internal/mpquic/scheduler`): `rssi` (default,
+  RSSI-based `PrimaryPathScheduler`), `pqi` (the Path Quality Index scheduler),
+  `min-rtt`, and `round-robin`, selectable with the client's `--scheduler` flag
+  so the rest of the stack stays constant for fair comparison.
 - **independent per-path loss recovery & congestion control** (§5.3/§5.4/§5.6/§5.7):
   each path has its own RTT estimator, congestion controller, and loss-detection
   timer (driven from the run loop); `sendOnPath` respects the path's own
@@ -96,6 +99,7 @@ separated by connection ID):
 
 ```bash
 ./bin/jetson --addr 192.168.0.80:4433 --path1 192.168.0.80:4433 --fps 5
+# default scheduler is rssi; pick another with --scheduler pqi|min-rtt|round-robin
 # server: QUIC_GO_LOG_LEVEL=debug ./bin/server   (PathAckFrame{PathID:1} in the log)
 ```
 
