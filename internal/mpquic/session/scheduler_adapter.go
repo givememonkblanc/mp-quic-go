@@ -22,13 +22,18 @@ func (a *quicPathSelectorAdapter) SelectPath(qp []quic.PathState) quic.PathID {
 	// Convert from quic.PathState to the session's path.State
 	states := make([]path.State, len(qp))
 	for i, ps := range qp {
-		state := path.State{ID: path.ID(ps.ID)}
+		state := path.State{ID: path.ID(ps.ID), Validated: ps.Validated}
 		if ps.Available {
 			state.Status = path.StatusActive
 		}
 		if ps.HasRSSI {
 			state.RSSI = ps.RSSI
 			state.HasRSSI = true
+		}
+		if ps.HasMetrics {
+			state.RTT = ps.RTT
+			state.Bandwidth = ps.Bandwidth
+			state.HasMetrics = true
 		}
 		states[i] = state
 	}

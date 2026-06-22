@@ -699,22 +699,44 @@ func (s *connection) pathStates() []PathState {
 	defer s.pathRSSIsLock.RUnlock()
 
 	states := make([]PathState, 0, 1+len(s.pathHandlers))
-	// Main path (path 0) is always available.
-	ps := PathState{ID: 0, Available: true}
+	// Main path (path 0) is always available and validated by the handshake.
+	ps := PathState{ID: 0, Available: true, Validated: true}
 	if rssi, ok := s.pathRSSIs[0]; ok {
 		ps.RSSI = rssi
 		ps.HasRSSI = true
 	}
+	fillPathMetrics(&ps, s.rttStats, s.sentPacketHandler)
 	states = append(states, ps)
 	for _, h := range s.pathHandlers {
-		ps := PathState{ID: h.ID, Available: true}
+		ps := PathState{ID: h.ID, Available: true, Validated: true}
 		if rssi, ok := s.pathRSSIs[h.ID]; ok {
 			ps.RSSI = rssi
 			ps.HasRSSI = true
 		}
+		fillPathMetrics(&ps, h.RTTStats, h.SentPH)
 		states = append(states, ps)
 	}
 	return states
+}
+
+// fillPathMetrics populates a PathState's transport metrics from a path's RTT
+// estimator and sent-packet handler: smoothed RTT, and an estimated goodput of
+// congestion window / RTT (a standard bandwidth-delay-product estimate).
+func fillPathMetrics(ps *PathState, rtt *utils.RTTStats, sph ackhandler.SentPacketHandler) {
+	if rtt == nil {
+		return
+	}
+	srtt := rtt.SmoothedRTT()
+	if srtt <= 0 {
+		return
+	}
+	ps.RTT = srtt
+	ps.HasMetrics = true
+	if cw, ok := sph.(interface {
+		GetCongestionWindow() protocol.ByteCount
+	}); ok {
+		ps.Bandwidth = float64(cw.GetCongestionWindow()) / srtt.Seconds()
+	}
 }
 
 // sentPacketHandlerForAddr returns the SentPacketHandler used to process an

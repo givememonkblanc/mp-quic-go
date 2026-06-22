@@ -742,6 +742,12 @@ func (h *sentPacketHandler) GetLossDetectionTimeout() time.Time {
 	return h.alarm
 }
 
+// GetCongestionWindow exposes the current congestion window (bytes) for path
+// quality estimation (bandwidth ~= cwnd / smoothed RTT).
+func (h *sentPacketHandler) GetCongestionWindow() protocol.ByteCount {
+	return h.congestion.GetCongestionWindow()
+}
+
 func (h *sentPacketHandler) ECNMode(isShortHeaderPacket bool) protocol.ECN {
 	if !h.enableECN {
 		return protocol.ECNUnsupported

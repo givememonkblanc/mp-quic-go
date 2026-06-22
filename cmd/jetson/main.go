@@ -19,6 +19,8 @@ import (
 	"github.com/quic-go/quic-go/qlog"
 	"mp-quic-go/internal/camera"
 	"mp-quic-go/internal/handler"
+	"mp-quic-go/internal/mpquic/scheduler"
+	"mp-quic-go/internal/mpquic/session"
 	"mp-quic-go/pkg/protocols"
 )
 
@@ -48,7 +50,7 @@ func main() {
 		MaxIdleTimeout:      30 * time.Second,
 		KeepAlivePeriod:     10 * time.Second,
 		InitialMaxPathID:    1,
-		PathSelector:        &roundRobinSelector{},
+		PathSelector:        session.NewQuicPathSelector(scheduler.NewPQIScheduler(scheduler.DefaultPQIConfig())),
 		Tracer:              qlog.DefaultConnectionTracer,
 	}
 

@@ -2,6 +2,7 @@ package quic
 
 import (
 	"net"
+	"time"
 
 	"github.com/quic-go/quic-go/internal/ackhandler"
 	"github.com/quic-go/quic-go/internal/protocol"
@@ -28,8 +29,15 @@ type PathSelector interface {
 type PathState struct {
 	ID        PathID
 	Available bool
+	Validated bool
 	RSSI      int
 	HasRSSI   bool
+	// Per-path transport metrics for quality-aware scheduling (PQI). RTT is the
+	// path's smoothed round-trip time; Bandwidth is an estimate in bytes/s
+	// (congestion window / RTT). HasMetrics is set once an RTT sample exists.
+	RTT        time.Duration
+	Bandwidth  float64
+	HasMetrics bool
 }
 
 // pathSendQueue wraps a sendConn and sendQueue together for one path.
