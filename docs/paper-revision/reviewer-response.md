@@ -170,13 +170,30 @@ This closes the **code** side of R1.6, R1.7, R3.3, R3.5 and the implementable
 part of R1.5. The per-path transport already provides the inputs (per-path RTT /
 congestion from the fork; loss via PATH_ACK; bandwidth from delivered bytes).
 
+**DONE — PQI is now live (R1.8):**
+
+- `quic.PathState` carries `Validated` + per-path `RTT`/`Bandwidth`/`HasMetrics`;
+  `connection.pathStates()` fills them from each path's RTT estimator and
+  sent-packet handler (`bandwidth = cwnd / smoothed RTT`;
+  `sentPacketHandler.GetCongestionWindow()` added).
+- The session scheduler adapter maps these into `path.State`, so `PQIScheduler`
+  ranks paths on live metrics (previously paths were never marked `Validated`, so
+  every scheduler silently fell back to path 0).
+- Server uses `scheduler.NewPQIScheduler(...)`; the Jetson client uses it too via
+  the session adapter (round-robin selector kept as a baseline).
+- Verified on hardware: 2-path streaming under the live PQI scheduler, 0
+  decryption failures / 0 protocol violations, frames delivered; PQI selects and
+  holds the best path (soft handover) rather than aggregating.
+
 **Still TODO (code/eval):**
 
-- Populate `path.State.{RTT,LossRate,Bandwidth}` in `internal/mpquic/session`
-  from the fork's per-path handlers each sampling tick, and switch the server to
-  `NewPQIScheduler(...)` (wire defaults from `config.yaml`). (R1.8)
-- Add baseline schedulers in the same stack for fair comparison: round-robin /
-  minRTT, and an SP-QUIC-with-connection-migration mode. (R1.10, R3.4)
+- Per-path loss rate is not yet measured (currently 0 = neutral in the cost);
+  RTT and bandwidth are live. Add a per-path loss counter to the sent-packet
+  handler to make all three cost terms live.
+- Add the remaining baseline modes for fair comparison: minRTT scheduler and an
+  SP-QUIC-with-connection-migration mode (round-robin baseline already present).
+  (R1.10, R3.4)
+- Wire PQI parameters from `config.yaml` (defaults are used now).
 - Investigate handover latency (R2.10) and normal-state throughput gap (R3.9).
 
 **Paper/Eval items** remain as listed in §1–§3 (terminology, related work,
