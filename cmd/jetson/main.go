@@ -19,6 +19,7 @@ import (
 	"github.com/quic-go/quic-go/qlog"
 	"mp-quic-go/internal/camera"
 	"mp-quic-go/internal/handler"
+	"mp-quic-go/internal/mpquic/pqi"
 	"mp-quic-go/internal/mpquic/scheduler"
 	"mp-quic-go/internal/mpquic/session"
 	"mp-quic-go/pkg/protocols"
@@ -33,6 +34,16 @@ var (
 	rgbWidth      = flag.Int("rgb-width", 640, "RGB frame width")
 	rgbHeight     = flag.Int("rgb-height", 480, "RGB frame height")
 	schedName     = flag.String("scheduler", "pqi", "path scheduler: pqi|min-rtt|round-robin|rssi")
+
+	// PQI scheduler parameters (reported in the paper; tunable for reproducibility).
+	pqiAlpha  = flag.Float64("pqi-alpha", 0.5, "PQI cost weight for RTT")
+	pqiBeta   = flag.Float64("pqi-beta", 0.3, "PQI cost weight for loss")
+	pqiGamma  = flag.Float64("pqi-gamma", 0.2, "PQI cost weight for bandwidth")
+	pqiLambda = flag.Float64("pqi-lambda", 0.3, "PQI EWMA smoothing factor")
+	pqiWindow = flag.Int("pqi-window", 10, "PQI trend sliding-window size (samples)")
+	pqiTdeg   = flag.Float64("pqi-tdeg", 40, "PQI degradation threshold")
+	pqiMargin = flag.Float64("pqi-margin", 10, "PQI handover safety margin")
+	pqiStable = flag.Duration("pqi-stable", 500*time.Millisecond, "PQI stability interval")
 )
 
 func main() {
@@ -50,9 +61,24 @@ func main() {
 	// Select the path scheduler (PQI by default). Switching schedulers via this
 	// flag, with the rest of the stack identical, supports the fair baseline
 	// comparison (PQI vs min-rtt vs round-robin) requested by the reviewers.
-	sched, err := scheduler.New(*schedName)
-	if err != nil {
-		log.Fatalf("scheduler: %v", err)
+	var sched scheduler.Scheduler
+	if *schedName == "pqi" {
+		sched = scheduler.NewPQIScheduler(scheduler.PQIConfig{
+			Weights: pqi.Weights{Alpha: *pqiAlpha, Beta: *pqiBeta, Gamma: *pqiGamma},
+			Lambda:  *pqiLambda,
+			Window:  *pqiWindow,
+			Hyst: pqi.HysteresisParams{
+				DegradationThreshold: *pqiTdeg,
+				SafetyMargin:         *pqiMargin,
+				StabilityInterval:    *pqiStable,
+			},
+		})
+	} else {
+		var err error
+		sched, err = scheduler.New(*schedName)
+		if err != nil {
+			log.Fatalf("scheduler: %v", err)
+		}
 	}
 	log.Printf("Using path scheduler: %s", sched.Name())
 
