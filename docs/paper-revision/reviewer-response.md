@@ -185,11 +185,12 @@ congestion from the fork; loss via PATH_ACK; bandwidth from delivered bytes).
   decryption failures / 0 protocol violations, frames delivered; PQI selects and
   holds the best path (soft handover) rather than aggregating.
 
+All three PQI cost terms are now live: per-path **RTT** (from the path RTT
+estimator), **bandwidth** (cwnd / RTT), and **loss rate** (1-RTT packets declared
+lost / sent, via `sentPacketHandler.LossRate()`).
+
 **Still TODO (code/eval):**
 
-- Per-path loss rate is not yet measured (currently 0 = neutral in the cost);
-  RTT and bandwidth are live. Add a per-path loss counter to the sent-packet
-  handler to make all three cost terms live.
 - Add the remaining baseline modes for fair comparison: minRTT scheduler and an
   SP-QUIC-with-connection-migration mode (round-robin baseline already present).
   (R1.10, R3.4)
