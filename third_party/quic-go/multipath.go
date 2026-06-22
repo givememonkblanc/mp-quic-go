@@ -66,10 +66,19 @@ type PathHandler struct {
 
 // NewPathHandler creates a new PathHandler with its own packet number space,
 // send queue, and congestion controller.
+//
+// srcInfo carries the local (source) address that outgoing packets on this path
+// must be sent from. This matters on the server side, where the underlying
+// socket is bound to a wildcard address: without an explicit source address the
+// kernel picks the primary local IP for every path, so replies on an alternate
+// path would egress from the wrong address and the peer's path validation would
+// never complete. Pass an empty packetInfo{} to let the OS choose the source
+// (correct for the client, which routes by destination from a single socket).
 func NewPathHandler(
 	id PathID,
 	rawConn rawConn,
 	remoteAddr net.Addr,
+	srcInfo packetInfo,
 	initialPacketNumber protocol.PacketNumber,
 	initialMaxDatagramSize protocol.ByteCount,
 	rttStats *utils.RTTStats,
@@ -79,7 +88,7 @@ func NewPathHandler(
 	tracer *logging.ConnectionTracer,
 	logger utils.Logger,
 ) (*PathHandler, error) {
-	sendConn := newSendConn(rawConn, remoteAddr, packetInfo{}, logger)
+	sendConn := newSendConn(rawConn, remoteAddr, srcInfo, logger)
 	sentPH, recvPH := ackhandler.NewAckHandler(
 		initialPacketNumber,
 		initialMaxDatagramSize,

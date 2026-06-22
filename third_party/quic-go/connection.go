@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -213,6 +214,17 @@ type connection struct {
 	pathByAddr    map[string]*PathHandler // remote address -> path handler
 	mainRawConn   rawConn                 // underlying rawConn for creating additional-path sendConns
 	pathRSSIs     map[PathID]int
+	// Server-side return paths: when a client probes/sends on an alternate path,
+	// its packets arrive on a different local (destination) address. The server's
+	// socket is bound to a wildcard address, so replies would otherwise egress
+	// from the primary local IP. We track one return path per local address that
+	// packets arrive on, each with a sendConn whose source address is pinned to
+	// that local address (via IP_PKTINFO), so ACKs and responses go back on the
+	// same path the peer used. Keyed by local IP string.
+	returnPaths map[string]*PathHandler
+	mainLocalIP netip.Addr // the local IP of the primary path (first 1-RTT packet seen)
+	lastRcvdLocalIP  netip.Addr // local IP the most recent 1-RTT packet arrived on
+	nextReturnPathID PathID
 	pathRSSIsLock sync.RWMutex
 }
 
@@ -507,6 +519,8 @@ func (s *connection) preSetup() {
 	s.connState.Version = s.version
 	s.pathHandlers = make(map[PathID]*PathHandler)
 	s.pathByAddr = make(map[string]*PathHandler)
+	s.returnPaths = make(map[string]*PathHandler)
+	s.nextReturnPathID = 1000 // separate ID range from client-added paths
 	if sc, ok := s.conn.(*sconn); ok {
 		s.mainRawConn = sc.rawConn
 	}
@@ -548,12 +562,14 @@ func (s *connection) AddPath(addr net.Addr, id PathID) error {
 	}
 
 	// Create a new PathHandler sharing the same underlying rawConn but with a different remote address.
-	// Each path gets its own PN space starting from 0.
+	// The empty packetInfo lets the OS pick the source address by destination route
+	// (correct for the client, which dials all paths from a single socket).
 	handler, err := NewPathHandler(
 		id,
 		s.mainRawConn,
 		addr,
-		0,                // initialPacketNumber: additional paths start from 0
+		packetInfo{}, // srcInfo: let the OS choose the source address
+		0,            // initialPacketNumber (unused under single PN space)
 		protocol.ByteCount(s.config.InitialPacketSize),
 		s.rttStats,
 		true, // clientAddressValidated: assume validated for additional paths
@@ -570,15 +586,64 @@ func (s *connection) AddPath(addr net.Addr, id PathID) error {
 	return nil
 }
 
-// receivedPacketHandlerForAddr returns the appropriate ReceivedPacketHandler for the
-// given remote address. If no matching path handler is found, the main path's handler
-// is returned.
-func (s *connection) receivedPacketHandlerForAddr(remoteAddr net.Addr) ackhandler.ReceivedPacketHandler {
-	if remoteAddr != nil && s.pathByAddr != nil {
-		if ph, ok := s.pathByAddr[remoteAddr.String()]; ok && ph.RecvPH != nil {
-			return ph.RecvPH
-		}
+// maybeAddReturnPath ensures the server has a return path for the local address
+// a packet arrived on. The wildcard-bound server socket would otherwise reply
+// from the primary local IP for every path; by pinning a sendConn's source
+// address (via IP_PKTINFO) to the local address the peer targeted, replies on
+// an alternate path go back on that same path. Called for decryptable 1-RTT
+// packets from the run loop goroutine, so map access needs no extra locking.
+func (s *connection) maybeAddReturnPath(p receivedPacket) {
+	if s.perspective != protocol.PerspectiveServer || !p.info.addr.IsValid() {
+		return
 	}
+	localIP := p.info.addr
+	// The first 1-RTT packet establishes the primary path's local address.
+	if !s.mainLocalIP.IsValid() {
+		s.mainLocalIP = localIP
+		return
+	}
+	if localIP == s.mainLocalIP || s.mainRawConn == nil {
+		return
+	}
+	key := localIP.String()
+	if _, ok := s.returnPaths[key]; ok {
+		return
+	}
+	id := s.nextReturnPathID
+	s.nextReturnPathID++
+	ph, err := NewPathHandler(
+		id,
+		s.mainRawConn,
+		p.remoteAddr,
+		p.info, // srcInfo: pin source address to the local address packets arrived on
+		0,
+		protocol.ByteCount(s.config.InitialPacketSize),
+		s.rttStats,
+		true,
+		s.conn.capabilities().ECN,
+		s.perspective,
+		s.tracer,
+		s.logger,
+	)
+	if err != nil {
+		s.logger.Errorf("failed to create return path for %s: %v", key, err)
+		return
+	}
+	s.returnPaths[key] = ph
+	go func() {
+		if err := ph.RunSendQueue(); err != nil {
+			s.logger.Errorf("return path %d send queue error: %v", id, err)
+		}
+	}()
+	s.logger.Infof("created server return path %d: src %s -> %s", id, key, p.remoteAddr)
+}
+
+// receivedPacketHandlerForAddr returns the ReceivedPacketHandler for incoming
+// packets. Under the single packet-number-space multipath model (see sendOnPath),
+// all paths share the main connection's PN space, so every received packet is
+// tracked by the main handler regardless of which path it arrived on. This keeps
+// ACK generation consistent across paths.
+func (s *connection) receivedPacketHandlerForAddr(remoteAddr net.Addr) ackhandler.ReceivedPacketHandler {
 	return s.receivedPacketHandler
 }
 
@@ -614,15 +679,11 @@ func (s *connection) pathStates() []PathState {
 	return states
 }
 
-// sentPacketHandlerForAddr returns the appropriate SentPacketHandler for the
-// given remote address. If no matching path handler is found, the main path's
-// handler is returned.
+// sentPacketHandlerForAddr returns the SentPacketHandler used to process an
+// incoming ACK. Under the single packet-number-space multipath model (see
+// sendOnPath), all paths' packets are tracked by the main handler, so ACKs
+// arriving on any path are processed against it regardless of remote address.
 func (s *connection) sentPacketHandlerForAddr(remoteAddr net.Addr) ackhandler.SentPacketHandler {
-	if remoteAddr != nil && s.pathByAddr != nil {
-		if ph, ok := s.pathByAddr[remoteAddr.String()]; ok && ph.SentPH != nil {
-			return ph.SentPH
-		}
-	}
 	return s.sentPacketHandler
 }
 
@@ -1098,7 +1159,25 @@ func (s *connection) handleShortHeaderPacket(p receivedPacket) bool {
 		s.closeLocal(err)
 		return false
 	}
+	// Server: make sure replies go back on the path this packet arrived on.
+	if p.info.addr.IsValid() {
+		s.lastRcvdLocalIP = p.info.addr
+	}
+	s.maybeAddReturnPath(p)
 	return true
+}
+
+// ackSendQueue picks the send queue an ACK-only packet should use, so that the
+// ACK egresses from the same local address as the path the peer last used. It
+// returns the matching return path's queue, or nil to use the main send queue.
+func (s *connection) ackSendQueue() *pathSendQueue {
+	if len(s.returnPaths) == 0 || !s.lastRcvdLocalIP.IsValid() {
+		return nil
+	}
+	if ph, ok := s.returnPaths[s.lastRcvdLocalIP.String()]; ok && !ph.SendQ.WouldBlock() {
+		return ph.SendQ
+	}
+	return nil
 }
 
 func (s *connection) handleLongHeaderPacket(p receivedPacket, hdr *wire.Header) bool /* was the packet successfully processed */ {
@@ -2224,7 +2303,13 @@ func (s *connection) maybeSendAckOnlyPacket(now time.Time) error {
 	}
 	s.logShortHeaderPacket(p.DestConnID, p.Ack, p.Frames, p.StreamFrames, p.PacketNumber, p.PacketNumberLen, p.KeyPhase, ecn, buf.Len(), false)
 	s.registerPackedShortHeaderPacket(p, ecn, now)
-	s.sendQueue.Send(buf, 0, ecn)
+	// Send the ACK back on the path the peer last used (correct source address),
+	// falling back to the main send queue.
+	if pq := s.ackSendQueue(); pq != nil {
+		pq.Send(buf, 0, ecn)
+	} else {
+		s.sendQueue.Send(buf, 0, ecn)
+	}
 	return nil
 }
 
@@ -2325,6 +2410,21 @@ func (s *connection) sendPackedCoalescedPacket(packet *coalescedPacket, ecn prot
 // If a PathSelector is configured, it is used to choose which path to send on.
 // Otherwise, all extra paths get a chance to send.
 func (s *connection) sendOnExtraPaths(now time.Time) error {
+	// Server return paths: flush any pending ACKs/responses on the path the peer
+	// used, so they egress from the matching local source address. sendOnPath is
+	// a no-op (errNothingToPack handled inside) when there is nothing queued, so
+	// this only produces traffic when there is actually something to send back.
+	if len(s.returnPaths) > 0 {
+		for _, ph := range s.returnPaths {
+			if ph.SendQ.WouldBlock() {
+				continue
+			}
+			if err := s.sendOnPath(ph, now); err != nil {
+				return err
+			}
+		}
+	}
+
 	if len(s.pathHandlers) == 0 {
 		return nil
 	}
@@ -2358,12 +2458,18 @@ func (s *connection) sendOnExtraPaths(now time.Time) error {
 }
 
 // sendOnPath sends a single packet on the given path's send queue.
+//
+// Single packet-number-space multipath: all paths share the main connection's
+// packet number space (s.sentPacketHandler) and ACK source. This is required
+// because the fork does not yet implement the multipath AEAD nonce (which mixes
+// the path ID into the nonce); without it, a per-path PN space restarting at 0
+// would reuse packet numbers across paths, causing AEAD nonce reuse and making
+// the peer drop the packets as duplicates. Sharing one PN space keeps every
+// packet number globally unique, so loss recovery and ACKs work across paths.
+// The only per-path state used here is the send queue (ph.SendQ), whose sendConn
+// carries the correct source/destination address for this path.
 func (s *connection) sendOnPath(ph *PathHandler, now time.Time) error {
-	// Switch to this path's packet number manager
-	s.packer.SetPacketNumberManager(ph.SentPH)
-	defer s.packer.SetPacketNumberManager(s.sentPacketHandler)
-
-	ecn := ph.SentPH.ECNMode(true)
+	ecn := s.sentPacketHandler.ECNMode(true)
 	buf := getPacketBuffer()
 	p, err := s.packer.AppendPacket(buf, s.maxPacketSize(), s.version)
 	if err != nil {
@@ -2377,7 +2483,6 @@ func (s *connection) sendOnPath(ph *PathHandler, now time.Time) error {
 	size := buf.Len()
 	s.logShortHeaderPacket(p.DestConnID, p.Ack, p.Frames, p.StreamFrames, p.PacketNumber, p.PacketNumberLen, p.KeyPhase, ecn, size, false)
 
-	// Register with this path's sent packet handler
 	if s.firstAckElicitingPacketAfterIdleSentTime.IsZero() && (len(p.StreamFrames) > 0 || ackhandler.HasAckElicitingFrames(p.Frames)) {
 		s.firstAckElicitingPacketAfterIdleSentTime = now
 	}
@@ -2385,7 +2490,7 @@ func (s *connection) sendOnPath(ph *PathHandler, now time.Time) error {
 	if p.Ack != nil {
 		largestAcked = p.Ack.LargestAcked()
 	}
-	ph.SentPH.SentPacket(now, p.PacketNumber, largestAcked, p.StreamFrames, p.Frames, protocol.Encryption1RTT, ecn, p.Length, p.IsPathMTUProbePacket)
+	s.sentPacketHandler.SentPacket(now, p.PacketNumber, largestAcked, p.StreamFrames, p.Frames, protocol.Encryption1RTT, ecn, p.Length, p.IsPathMTUProbePacket)
 	s.connIDManager.SentPacket()
 
 	ph.SendQ.Send(buf, 0, ecn)
