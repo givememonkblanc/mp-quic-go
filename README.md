@@ -103,6 +103,24 @@ The full `quic-go` fork unit suite passes (`go test ./third_party/quic-go/...`);
 one upstream test (`ListenAddr` to a non-local address) is environment-dependent
 on hosts that can bind arbitrary addresses and is unrelated to multipath.
 
+### Scheduler comparison (same stack, only the scheduler differs)
+
+`scripts/compare-schedulers.sh` runs the client with each scheduler N times with
+everything else held constant, so the comparison isolates the scheduler. Steady
+state, clean LAN, two paths, 5 fps, 18 s/run, 3 repetitions (frames delivered):
+
+| scheduler   | mean | stddev | min | errors |
+| ----------- | ---- | ------ | --- | ------ |
+| pqi         | 43.0 | 1.0    | 42  | 0      |
+| min-rtt     | 44.0 | 0.0    | 44  | 0      |
+| round-robin | 42.7 | 1.5    | 41  | 0      |
+
+With both paths healthy the schedulers are equivalent within noise (0 errors) —
+i.e. PQI does not reduce normal-state throughput. PQI's benefit appears at
+handover, which requires impairing a path (`tc netem`) — that scenario is the
+next evaluation step. See `docs/paper-revision/` for the full revision plan and
+results.
+
 Still missing / simplified in the fork:
 
 - server-initiated per-path **data** transmission is not exercised by the
