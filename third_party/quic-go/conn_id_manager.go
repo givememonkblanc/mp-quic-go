@@ -35,6 +35,12 @@ type connIDManager struct {
 	addStatelessResetToken    func(protocol.StatelessResetToken)
 	removeStatelessResetToken func(protocol.StatelessResetToken)
 	queueControlFrame         func(wire.Frame)
+
+	// Per-path peer connection IDs (draft-21 multipath). Connection IDs the peer
+	// issued for a non-zero path via PATH_NEW_CONNECTION_ID are stored here and
+	// used as the Destination Connection ID when sending on that path (§3.1).
+	// Path 0 continues to use the fields above.
+	pathConnIDs map[PathID][]newConnID
 }
 
 func newConnIDManager(
@@ -53,6 +59,47 @@ func newConnIDManager(
 
 func (h *connIDManager) AddFromPreferredAddress(connID protocol.ConnectionID, resetToken protocol.StatelessResetToken) error {
 	return h.addConnectionID(1, connID, resetToken)
+}
+
+// AddPath stores a peer connection ID issued for a non-zero path via a
+// PATH_NEW_CONNECTION_ID frame (draft-21 §4.4). The connection ID becomes usable
+// as the Destination Connection ID for sending on that path. Its stateless reset
+// token is registered so the peer can reset the path.
+func (h *connIDManager) AddPath(f *wire.PathNewConnectionIDFrame) error {
+	pathID := PathID(f.PathID)
+	if pathID == 0 {
+		return &qerr.TransportError{
+			ErrorCode:    qerr.ProtocolViolation,
+			ErrorMessage: "PATH_NEW_CONNECTION_ID for path 0",
+		}
+	}
+	if h.pathConnIDs == nil {
+		h.pathConnIDs = make(map[PathID][]newConnID)
+	}
+	// Ignore duplicates (same path + sequence number).
+	for _, c := range h.pathConnIDs[pathID] {
+		if c.SequenceNumber == f.SequenceNumber {
+			return nil
+		}
+	}
+	h.pathConnIDs[pathID] = append(h.pathConnIDs[pathID], newConnID{
+		SequenceNumber:      f.SequenceNumber,
+		ConnectionID:        f.ConnectionID,
+		StatelessResetToken: f.StatelessResetToken,
+	})
+	h.addStatelessResetToken(f.StatelessResetToken)
+	return nil
+}
+
+// GetForPath returns a peer connection ID to use as the Destination Connection
+// ID when sending on the given non-zero path, or false if the peer has not yet
+// issued one for that path (in which case the path cannot carry traffic, §3.1).
+func (h *connIDManager) GetForPath(pathID PathID) (protocol.ConnectionID, bool) {
+	conns := h.pathConnIDs[pathID]
+	if len(conns) == 0 {
+		return protocol.ConnectionID{}, false
+	}
+	return conns[0].ConnectionID, true
 }
 
 func (h *connIDManager) Add(f *wire.NewConnectionIDFrame) error {

@@ -191,7 +191,7 @@ var _ = Describe("Connection", func() {
 				sph := mockackhandler.NewMockSentPacketHandler(mockCtrl)
 				sph.EXPECT().ReceivedAck(f, protocol.EncryptionHandshake, gomock.Any())
 				conn.sentPacketHandler = sph
-				err := conn.handleAckFrame(f, protocol.EncryptionHandshake)
+				err := conn.handleAckFrame(f, protocol.EncryptionHandshake, conn.sentPacketHandler)
 				Expect(err).ToNot(HaveOccurred())
 			})
 		})
@@ -228,7 +228,7 @@ var _ = Describe("Connection", func() {
 				Expect(conn.handleFrame(&wire.ResetStreamFrame{
 					StreamID:  3,
 					ErrorCode: 42,
-				}, protocol.Encryption1RTT, protocol.ConnectionID{})).To(Succeed())
+				}, protocol.Encryption1RTT, protocol.ConnectionID{}, conn.sentPacketHandler)).To(Succeed())
 			})
 		})
 
@@ -262,7 +262,7 @@ var _ = Describe("Connection", func() {
 				Expect(conn.handleFrame(&wire.MaxStreamDataFrame{
 					StreamID:          10,
 					MaximumStreamData: 1337,
-				}, protocol.Encryption1RTT, protocol.ConnectionID{})).To(Succeed())
+				}, protocol.Encryption1RTT, protocol.ConnectionID{}, conn.sentPacketHandler)).To(Succeed())
 			})
 		})
 
@@ -295,7 +295,7 @@ var _ = Describe("Connection", func() {
 				Expect(conn.handleFrame(&wire.StopSendingFrame{
 					StreamID:  3,
 					ErrorCode: 1337,
-				}, protocol.Encryption1RTT, protocol.ConnectionID{})).To(Succeed())
+				}, protocol.Encryption1RTT, protocol.ConnectionID{}, conn.sentPacketHandler)).To(Succeed())
 			})
 		})
 
@@ -304,23 +304,23 @@ var _ = Describe("Connection", func() {
 			Expect(conn.handleFrame(&wire.NewConnectionIDFrame{
 				SequenceNumber: 10,
 				ConnectionID:   connID,
-			}, protocol.Encryption1RTT, protocol.ConnectionID{})).To(Succeed())
+			}, protocol.Encryption1RTT, protocol.ConnectionID{}, conn.sentPacketHandler)).To(Succeed())
 			Expect(conn.connIDManager.queue.Back().Value.ConnectionID).To(Equal(connID))
 		})
 
 		It("handles PING frames", func() {
-			err := conn.handleFrame(&wire.PingFrame{}, protocol.Encryption1RTT, protocol.ConnectionID{})
+			err := conn.handleFrame(&wire.PingFrame{}, protocol.Encryption1RTT, protocol.ConnectionID{}, conn.sentPacketHandler)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
 		It("rejects PATH_RESPONSE frames", func() {
-			err := conn.handleFrame(&wire.PathResponseFrame{Data: [8]byte{1, 2, 3, 4, 5, 6, 7, 8}}, protocol.Encryption1RTT, protocol.ConnectionID{})
+			err := conn.handleFrame(&wire.PathResponseFrame{Data: [8]byte{1, 2, 3, 4, 5, 6, 7, 8}}, protocol.Encryption1RTT, protocol.ConnectionID{}, conn.sentPacketHandler)
 			Expect(err).To(MatchError("unexpected PATH_RESPONSE frame"))
 		})
 
 		It("handles PATH_CHALLENGE frames", func() {
 			data := [8]byte{1, 2, 3, 4, 5, 6, 7, 8}
-			err := conn.handleFrame(&wire.PathChallengeFrame{Data: data}, protocol.Encryption1RTT, protocol.ConnectionID{})
+			err := conn.handleFrame(&wire.PathChallengeFrame{Data: data}, protocol.Encryption1RTT, protocol.ConnectionID{}, conn.sentPacketHandler)
 			Expect(err).ToNot(HaveOccurred())
 			frames, _ := conn.framer.AppendControlFrames(nil, 1000, protocol.Version1)
 			Expect(frames).To(Equal([]ackhandler.Frame{{Frame: &wire.PathResponseFrame{Data: data}}}))
@@ -334,17 +334,17 @@ var _ = Describe("Connection", func() {
 		})
 
 		It("handles BLOCKED frames", func() {
-			err := conn.handleFrame(&wire.DataBlockedFrame{}, protocol.Encryption1RTT, protocol.ConnectionID{})
+			err := conn.handleFrame(&wire.DataBlockedFrame{}, protocol.Encryption1RTT, protocol.ConnectionID{}, conn.sentPacketHandler)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
 		It("handles STREAM_BLOCKED frames", func() {
-			err := conn.handleFrame(&wire.StreamDataBlockedFrame{}, protocol.Encryption1RTT, protocol.ConnectionID{})
+			err := conn.handleFrame(&wire.StreamDataBlockedFrame{}, protocol.Encryption1RTT, protocol.ConnectionID{}, conn.sentPacketHandler)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
 		It("handles STREAMS_BLOCKED frames", func() {
-			err := conn.handleFrame(&wire.StreamsBlockedFrame{}, protocol.Encryption1RTT, protocol.ConnectionID{})
+			err := conn.handleFrame(&wire.StreamsBlockedFrame{}, protocol.Encryption1RTT, protocol.ConnectionID{}, conn.sentPacketHandler)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -373,7 +373,7 @@ var _ = Describe("Connection", func() {
 			Expect(conn.handleFrame(&wire.ConnectionCloseFrame{
 				ErrorCode:    uint64(qerr.StreamLimitError),
 				ReasonPhrase: "foobar",
-			}, protocol.Encryption1RTT, protocol.ConnectionID{})).To(Succeed())
+			}, protocol.Encryption1RTT, protocol.ConnectionID{}, conn.sentPacketHandler)).To(Succeed())
 			Eventually(conn.Context().Done()).Should(BeClosed())
 		})
 
@@ -404,7 +404,7 @@ var _ = Describe("Connection", func() {
 				ReasonPhrase:       "foobar",
 				IsApplicationError: true,
 			}
-			Expect(conn.handleFrame(ccf, protocol.Encryption1RTT, protocol.ConnectionID{})).To(Succeed())
+			Expect(conn.handleFrame(ccf, protocol.Encryption1RTT, protocol.ConnectionID{}, conn.sentPacketHandler)).To(Succeed())
 			Eventually(conn.Context().Done()).Should(BeClosed())
 			Expect(context.Cause(conn.Context())).To(MatchError(testErr))
 		})
@@ -2694,7 +2694,7 @@ var _ = Describe("Client Connection", func() {
 		sph.EXPECT().SetHandshakeConfirmed()
 		cryptoSetup.EXPECT().SetLargest1RTTAcked(protocol.PacketNumber(3))
 		cryptoSetup.EXPECT().SetHandshakeConfirmed()
-		Expect(conn.handleAckFrame(ack, protocol.Encryption1RTT)).To(Succeed())
+		Expect(conn.handleAckFrame(ack, protocol.Encryption1RTT, conn.sentPacketHandler)).To(Succeed())
 	})
 
 	It("doesn't send a CONNECTION_CLOSE when no packet was sent", func() {

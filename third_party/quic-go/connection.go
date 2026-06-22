@@ -1590,6 +1590,10 @@ func (s *connection) handleFrame(f wire.Frame, encLevel protocol.EncryptionLevel
 		err = s.handleNewConnectionIDFrame(frame)
 	case *wire.RetireConnectionIDFrame:
 		err = s.handleRetireConnectionIDFrame(frame, destConnID)
+	case *wire.PathNewConnectionIDFrame:
+		err = s.connIDManager.AddPath(frame)
+	case *wire.PathRetireConnectionIDFrame:
+		err = s.connIDGenerator.RetireForPath(PathID(frame.PathID), frame.SequenceNumber)
 	case *wire.HandshakeDoneFrame:
 		err = s.handleHandshakeDoneFrame()
 	case *wire.DatagramFrame:
