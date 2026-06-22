@@ -564,6 +564,7 @@ var _ = Describe("Connection", func() {
 			unpacker := NewMockUnpacker(mockCtrl)
 			conn.handshakeConfirmed = true
 			conn.unpacker = unpacker
+			unpacker.EXPECT().SetPath(gomock.Any()).AnyTimes()
 			runConn()
 			cryptoSetup.EXPECT().Close()
 			streamManager.EXPECT().CloseWithError(gomock.Any())
@@ -643,6 +644,7 @@ var _ = Describe("Connection", func() {
 		BeforeEach(func() {
 			unpacker = NewMockUnpacker(mockCtrl)
 			conn.unpacker = unpacker
+			unpacker.EXPECT().SetPath(gomock.Any()).AnyTimes()
 		})
 
 		getShortHeaderPacket := func(connID protocol.ConnectionID, pn protocol.PacketNumber, data []byte) receivedPacket {
@@ -2608,6 +2610,7 @@ var _ = Describe("Client Connection", func() {
 			}, nil
 		})
 		conn.unpacker = unpacker
+		unpacker.EXPECT().SetPath(gomock.Any()).AnyTimes()
 		done := make(chan struct{})
 		packer.EXPECT().PackCoalescedPacket(gomock.Any(), gomock.Any(), gomock.Any()).Do(func(onlyAck bool, maxPacketSize protocol.ByteCount, v protocol.Version) (*coalescedPacket, error) {
 			close(done)
@@ -2648,6 +2651,7 @@ var _ = Describe("Client Connection", func() {
 	It("continues accepting Long Header packets after using a new connection ID", func() {
 		unpacker := NewMockUnpacker(mockCtrl)
 		conn.unpacker = unpacker
+		unpacker.EXPECT().SetPath(gomock.Any()).AnyTimes()
 		connRunner.EXPECT().AddResetToken(gomock.Any(), gomock.Any())
 		conn.connIDManager.SetHandshakeComplete()
 		conn.handleNewConnectionIDFrame(&wire.NewConnectionIDFrame{
@@ -3150,6 +3154,7 @@ var _ = Describe("Client Connection", func() {
 			// Modified from test "ignores packets with a different source connection ID"
 			unpacker = NewMockUnpacker(mockCtrl)
 			conn.unpacker = unpacker
+			unpacker.EXPECT().SetPath(gomock.Any()).AnyTimes()
 
 			hdr1 := &wire.ExtendedHeader{
 				Header: wire.Header{
