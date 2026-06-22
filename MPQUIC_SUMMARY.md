@@ -74,9 +74,12 @@ Jetson 클라이언트가 두 경로로 동시에 depth+RGB를 전송하고, 서
 # 서버 디버그 로그(QUIC_GO_LOG_LEVEL=debug)에서 PathAckFrame{PathID:1} 확인 가능
 ```
 
+멀티패스 손실복구/혼잡제어: **경로별 독립** (§5.3/§5.4/§5.6/§5.7) — 경로마다
+자체 RTT 추정·혼잡제어기·손실검출 타이머(run loop가 구동), `sendOnPath`는
+경로별 혼잡 윈도우를 준수.
+
 ## 다음 단계
 - 실제 Orbbec 카메라 통합
 - qlogviewerDashboard 실시간 시각화
-- 경로별 독립 손실복구/혼잡제어 (per-path PN 공간은 있으나 복구 튜닝은 공용)
 - 서버발(下) per-path 데이터 송신 시나리오 (현재 앱은 PATH_ACK만 反送)
 - PATH_ABANDON / PATH_STATUS 전이의 transport 레벨 강제

@@ -76,6 +76,10 @@ Draft-21 per-path multipath (implemented in the fork, verified on hardware):
 - additional client paths via `Connection.AddPath`; client-side `PathSelector`
   (e.g. round-robin) distributes packets across paths; paths may share a 4-tuple
   and be distinguished purely by connection ID (§5.2).
+- **independent per-path loss recovery & congestion control** (§5.3/§5.4/§5.6/§5.7):
+  each path has its own RTT estimator, congestion controller, and loss-detection
+  timer (driven from the run loop); `sendOnPath` respects the path's own
+  congestion window.
 
 Verified end-to-end on hardware: a Jetson client streams depth+RGB over two
 paths (same 4-tuple, distinguished by DCID) to the server, which decrypts path-1
@@ -84,8 +88,6 @@ failures and no stall. Bidirectional `PATH_NEW_CONNECTION_ID` exchange confirmed
 
 Still missing / simplified in the fork:
 
-- per-path independent loss recovery / congestion control (the per-path PN
-  spaces exist, but recovery tuning is not path-specialised)
 - server-initiated per-path **data** transmission is not exercised by the
   current app (the server only returns PATH_ACK on path 0); the capability is
   present once the peer has issued a per-path CID
