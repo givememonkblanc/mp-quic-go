@@ -12,7 +12,12 @@ This repository now includes a repo-level draft-21 MP-QUIC implementation layer 
 
 It now includes a **local `quic-go` fork** for the first wire-level slice: draft-21 transport-parameter plumbing and native `internal/wire` multipath frame parsing/serialization.
 
-It is still **not** a complete wire-compatible full stack until packet protection, per-path packet number spaces in transport internals, and actual multi-path packet transmission are implemented in the fork.
+The fork can now actually transmit over multiple paths simultaneously, using a
+simplified **single shared packet-number-space** model (paths differ only by
+their network 4-tuple). This is verified working end-to-end on hardware. It is
+still **not** wire-compatible with draft-21 multipath, which requires per-path
+packet number spaces and a path-ID-mixed AEAD nonce — see "Current
+implementation boundary" below.
 
 ## Layout
 
@@ -52,12 +57,30 @@ Partially transport-native in the local fork:
 - `initial_max_path_id` transport parameter wiring
 - native `internal/wire` parsing/serialization for draft multipath frames
 
+Working multipath transmission (simplified, single packet-number-space model):
+
+- real per-path packet transmission across multiple active paths, verified
+  end-to-end on hardware (Jetson client sending depth+RGB over two paths to a
+  wildcard-bound server)
+- server-side per-path source address control: replies (ACKs/responses) egress
+  from the same local address the peer's path packets arrived on, via
+  per-path `sendConn`s with an explicit `IP_PKTINFO` source address
+- additional client paths via `Connection.AddPath`; client-side `PathSelector`
+  (e.g. round-robin) distributes packets across paths
+
+This uses a **single, shared packet number space** for all paths instead of the
+draft's per-path PN spaces. Paths differ only by their network 4-tuple, which
+sidesteps the missing path-ID AEAD nonce (see below) by keeping every packet
+number globally unique. It is sufficient for practical multipath (notably the
+Jetson uplink), but is **not** wire-compatible with draft-21 multipath.
+
 Still missing in the fork:
 
 - modified AEAD nonce calculation with path ID
-- per-path packet number spaces in the real transport pipeline
+- true per-path packet number spaces (the implementation deliberately collapses
+  these into one shared space; see above)
+- per-path independent loss recovery / congestion control
 - native connection/path lifecycle enforcement across multiple paths
-- real per-path packet transmission across multiple active paths
 
 RSSI input boundary right now:
 
