@@ -33,7 +33,7 @@ var (
 	depthHeight   = flag.Int("depth-height", 240, "Depth frame height")
 	rgbWidth      = flag.Int("rgb-width", 640, "RGB frame width")
 	rgbHeight     = flag.Int("rgb-height", 480, "RGB frame height")
-	schedName     = flag.String("scheduler", "pqi", "path scheduler: pqi|min-rtt|round-robin|rssi")
+	schedName     = flag.String("scheduler", "rssi", "path scheduler: pqi|min-rtt|round-robin|rssi")
 
 	// PQI scheduler parameters (reported in the paper; tunable for reproducibility).
 	pqiAlpha  = flag.Float64("pqi-alpha", 0.5, "PQI cost weight for RTT")

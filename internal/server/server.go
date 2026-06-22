@@ -69,7 +69,7 @@ func New(cfg Config, log *slog.Logger) (*Server, error) {
 		}
 		rssiProvider = provider
 	}
-	pathSched := scheduler.NewPQIScheduler(scheduler.DefaultPQIConfig())
+	pathSched := scheduler.NewPrimaryPathScheduler()
 	sessions, err := mpquicsession.NewManager(
 		log,
 		streamHandler,
