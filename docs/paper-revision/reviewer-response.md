@@ -146,3 +146,39 @@ Default parameters (configurable in `config.yaml`, reported in the paper):
   testbed specification (3.6), cross-traffic / rate justification (2.7–2.9).
 
 Status legend: TODO · IN PROGRESS · DONE.
+
+---
+
+## 5. Implementation progress (code)
+
+**DONE — PQI subsystem now implemented and unit-tested**:
+
+- `internal/mpquic/pqi/normalization.go` — `MinMaxNormalize` (formal min-max).
+- `internal/mpquic/pqi/estimator.go` — `Metrics`, `Weights`, `ComputePQI`
+  (cost `α·RTT~ + β·loss~ + γ·(1−bw~)`, `PQI = 100·(1−C)`), `Estimator` (EWMA +
+  sliding-window trend).
+- `internal/mpquic/pqi/recovery.go` — `HandoverController` (degradation
+  threshold + safety margin + stability interval hysteresis).
+- `internal/mpquic/scheduler/pqi_scheduler.go` — `PQIScheduler` implementing the
+  `Scheduler` interface (cold-start best, sticky-while-healthy, hysteresis
+  handover); configurable `PQIConfig`.
+- `internal/mpquic/path/path.go` — `State` gains `RTT`/`LossRate`/`Bandwidth`/
+  `HasMetrics`.
+- Real tests replace the placeholder stubs; all pass.
+
+This closes the **code** side of R1.6, R1.7, R3.3, R3.5 and the implementable
+part of R1.5. The per-path transport already provides the inputs (per-path RTT /
+congestion from the fork; loss via PATH_ACK; bandwidth from delivered bytes).
+
+**Still TODO (code/eval):**
+
+- Populate `path.State.{RTT,LossRate,Bandwidth}` in `internal/mpquic/session`
+  from the fork's per-path handlers each sampling tick, and switch the server to
+  `NewPQIScheduler(...)` (wire defaults from `config.yaml`). (R1.8)
+- Add baseline schedulers in the same stack for fair comparison: round-robin /
+  minRTT, and an SP-QUIC-with-connection-migration mode. (R1.10, R3.4)
+- Investigate handover latency (R2.10) and normal-state throughput gap (R3.9).
+
+**Paper/Eval items** remain as listed in §1–§3 (terminology, related work,
+migration/N3IWF, parameter table, claim softening, Wi-Fi spelling, equation
+numbering, figures, N-run statistics, testbed spec).
