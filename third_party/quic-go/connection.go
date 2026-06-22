@@ -27,6 +27,7 @@ import (
 type unpacker interface {
 	UnpackLongHeader(hdr *wire.Header, data []byte) (*unpackedPacket, error)
 	UnpackShortHeader(rcvTime time.Time, data []byte) (protocol.PacketNumber, protocol.PacketNumberLen, protocol.KeyPhaseBit, []byte, error)
+	SetPath(pathID uint32)
 }
 
 type streamManager interface {
@@ -1117,6 +1118,12 @@ func (s *connection) handleShortHeaderPacket(p receivedPacket) bool {
 		s.tracer.DroppedPacket(logging.PacketType1RTT, protocol.InvalidPacketNumber, protocol.ByteCount(len(p.data)), logging.PacketDropHeaderParseError)
 		return false
 	}
+	// Multipath demux: resolve which path this packet's Destination Connection ID
+	// belongs to, so the unpacker uses that path's packet number space and AEAD
+	// nonce path ID (draft-21 §3.1). Resolves to path 0 for primary/handshake
+	// connection IDs, leaving standard QUIC decryption unchanged.
+	pktPathID, _ := s.connIDGenerator.PathForConnID(destConnID)
+	s.unpacker.SetPath(pktPathID)
 	pn, pnLen, keyPhase, data, err := s.unpacker.UnpackShortHeader(p.rcvTime, p.data)
 	if err != nil {
 		wasQueued = s.handleUnpackError(err, p, logging.PacketType1RTT)

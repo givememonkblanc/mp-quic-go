@@ -80,6 +80,18 @@ func (c *MockUnpackerUnpackLongHeaderCall) DoAndReturn(f func(*wire.Header, []by
 	return c
 }
 
+// SetPath mocks base method.
+func (m *MockUnpacker) SetPath(arg0 uint32) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "SetPath", arg0)
+}
+
+// SetPath indicates an expected call of SetPath.
+func (mr *MockUnpackerMockRecorder) SetPath(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetPath", reflect.TypeOf((*MockUnpacker)(nil).SetPath), arg0)
+}
+
 // UnpackShortHeader mocks base method.
 func (m *MockUnpacker) UnpackShortHeader(arg0 time.Time, arg1 []byte) (protocol.PacketNumber, protocol.PacketNumberLen, protocol.KeyPhaseBit, []byte, error) {
 	m.ctrl.T.Helper()

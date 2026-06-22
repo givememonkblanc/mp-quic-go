@@ -28,6 +28,7 @@ type packer interface {
 
 	SetToken([]byte)
 	SetPacketNumberManager(pm packetNumberManager)
+	SetPath(pathID uint32)
 }
 
 type sealer interface {
@@ -135,6 +136,19 @@ type packetPacker struct {
 	rand                rand.Rand
 
 	numNonAckElicitingAcks int
+
+	// pathID is the multipath path the next 1-RTT packet is being packed for.
+	// 0 means the primary path (standard QUIC, byte-identical). When non-zero,
+	// 1-RTT packets are sealed with the draft-21 path-ID AEAD nonce (§2.4) so the
+	// per-path packet number space does not reuse nonces across paths.
+	pathID uint32
+}
+
+// pathSealer is the subset of the 1-RTT AEAD that seals with a path-ID nonce.
+// The 1-RTT sealer (updatableAEAD) implements it; handshake sealers do not, so
+// it is used via type assertion only for non-zero paths.
+type pathSealer interface {
+	SealForPath(dst, src []byte, pathID uint32, pn protocol.PacketNumber, ad []byte) []byte
 }
 
 var _ packer = &packetPacker{}
@@ -174,6 +188,13 @@ func newPacketPacker(
 // This enables per-path packet number spaces for multipath QUIC.
 func (p *packetPacker) SetPacketNumberManager(pm packetNumberManager) {
 	p.pnManager = pm
+}
+
+// SetPath selects the multipath path subsequent 1-RTT packets are packed for.
+// Path 0 (the default) uses standard QUIC sealing; a non-zero path uses the
+// draft-21 path-ID AEAD nonce. Callers must reset to 0 after packing a path.
+func (p *packetPacker) SetPath(pathID uint32) {
+	p.pathID = pathID
 }
 
 // PackConnectionClose packs a packet that closes the connection with a transport error.
@@ -908,7 +929,15 @@ func (p *packetPacker) appendPacketPayload(raw []byte, pl payload, paddingLen pr
 }
 
 func (p *packetPacker) encryptPacket(raw []byte, sealer sealer, pn protocol.PacketNumber, payloadOffset, pnLen protocol.ByteCount) []byte {
-	_ = sealer.Seal(raw[payloadOffset:payloadOffset], raw[payloadOffset:], pn, raw[:payloadOffset])
+	if p.pathID != 0 {
+		if ps, ok := sealer.(pathSealer); ok {
+			_ = ps.SealForPath(raw[payloadOffset:payloadOffset], raw[payloadOffset:], p.pathID, pn, raw[:payloadOffset])
+		} else {
+			_ = sealer.Seal(raw[payloadOffset:payloadOffset], raw[payloadOffset:], pn, raw[:payloadOffset])
+		}
+	} else {
+		_ = sealer.Seal(raw[payloadOffset:payloadOffset], raw[payloadOffset:], pn, raw[:payloadOffset])
+	}
 	raw = raw[:len(raw)+sealer.Overhead()]
 	// apply header protection
 	pnOffset := payloadOffset - pnLen

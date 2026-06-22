@@ -37,6 +37,18 @@ type packetUnpacker struct {
 	cs handshake.CryptoSetup
 
 	shortHdrConnIDLen int
+
+	// pathID is the multipath path the next short-header packet is decrypted for,
+	// resolved from the packet's Destination Connection ID. 0 = primary path
+	// (standard QUIC). Non-zero uses the draft-21 path-ID AEAD nonce / per-path
+	// packet number space.
+	pathID uint32
+}
+
+// pathOpener is the subset of the 1-RTT AEAD that decrypts with a path-ID nonce.
+type pathOpener interface {
+	DecodePacketNumberForPath(pathID uint32, wirePN protocol.PacketNumber, wirePNLen protocol.PacketNumberLen) protocol.PacketNumber
+	OpenForPath(dst, src []byte, rcvTime time.Time, pathID uint32, pn protocol.PacketNumber, kp protocol.KeyPhaseBit, ad []byte) ([]byte, error)
 }
 
 var _ unpacker = &packetUnpacker{}
@@ -152,12 +164,28 @@ func (u *packetUnpacker) unpackShortHeaderPacket(opener handshake.ShortHeaderOpe
 	if parseErr != nil && parseErr != wire.ErrInvalidReservedBits {
 		return 0, 0, 0, nil, &headerParseError{parseErr}
 	}
+	if u.pathID != 0 {
+		if po, ok := opener.(pathOpener); ok {
+			pn = po.DecodePacketNumberForPath(u.pathID, pn, pnLen)
+			decrypted, err := po.OpenForPath(data[l:l], data[l:], rcvTime, u.pathID, pn, kp, data[:l])
+			if err != nil {
+				return 0, 0, 0, nil, err
+			}
+			return pn, pnLen, kp, decrypted, parseErr
+		}
+	}
 	pn = opener.DecodePacketNumber(pn, pnLen)
 	decrypted, err := opener.Open(data[l:l], data[l:], rcvTime, pn, kp, data[:l])
 	if err != nil {
 		return 0, 0, 0, nil, err
 	}
 	return pn, pnLen, kp, decrypted, parseErr
+}
+
+// SetPath selects the multipath path the next short-header packet is decrypted
+// for. Resolved from the packet's Destination Connection ID by the connection.
+func (u *packetUnpacker) SetPath(pathID uint32) {
+	u.pathID = pathID
 }
 
 func (u *packetUnpacker) unpackShortHeader(hd headerDecryptor, data []byte) (int, protocol.PacketNumber, protocol.PacketNumberLen, protocol.KeyPhaseBit, error) {
