@@ -592,6 +592,57 @@ func (s *connection) AddPath(addr net.Addr, id PathID) error {
 	return nil
 }
 
+// AddPathConn adds a path that sends and receives on its own socket (pconn),
+// rather than sharing the main connection's socket. Bind pconn to a specific
+// network interface (e.g. via SO_BINDTODEVICE) to pin the path to that interface
+// — this enables true heterogeneous multipath, e.g. path 0 on Wi-Fi and path 1
+// on cellular, both reaching the same edge server. The connection starts a read
+// loop on pconn so the peer's replies on this path (ACKs / PATH_ACK) are
+// processed; the path is demultiplexed by Destination Connection ID as usual.
+func (s *connection) AddPathConn(addr net.Addr, id PathID, pconn net.PacketConn) error {
+	if id == 0 {
+		return fmt.Errorf("cannot add path with ID 0: main path")
+	}
+	if _, ok := s.pathHandlers[id]; ok {
+		return fmt.Errorf("path %d already exists", id)
+	}
+	rc, err := wrapConn(pconn)
+	if err != nil {
+		return fmt.Errorf("wrapping path conn: %w", err)
+	}
+	handler, err := NewPathHandler(
+		id,
+		rc,
+		addr,
+		packetInfo{}, // srcInfo: the bound socket already fixes the source interface
+		0,
+		protocol.ByteCount(s.config.InitialPacketSize),
+		true,
+		s.conn.capabilities().ECN,
+		s.perspective,
+		s.tracer,
+		s.logger,
+	)
+	if err != nil {
+		return fmt.Errorf("creating path handler: %w", err)
+	}
+	s.AddPathHandler(handler)
+	go s.pathReadLoop(rc)
+	return nil
+}
+
+// pathReadLoop reads packets from a per-path socket and feeds them into the
+// connection. It exits when the socket is closed (ReadPacket returns an error).
+func (s *connection) pathReadLoop(rc rawConn) {
+	for {
+		p, err := rc.ReadPacket()
+		if err != nil {
+			return
+		}
+		s.handlePacket(p)
+	}
+}
+
 // ensurePathHandler returns the PathHandler for a non-zero path, lazily creating
 // one if needed. The client creates handlers via AddPath; the server creates one
 // on demand the first time it receives a packet on a path (identified by the

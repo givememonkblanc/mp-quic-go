@@ -13,6 +13,7 @@ import (
 	"log"
 	"net"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -28,6 +29,8 @@ import (
 var (
 	serverAddr    = flag.String("addr", "localhost:4433", "QUIC server address")
 	secondAddr    = flag.String("path1", "", "Second server address for path 1 (e.g., localhost:4434)")
+	path0Iface    = flag.String("path0-iface", "", "bind path 0 (main) to this network interface, e.g. wlP1p1s0 (needs root)")
+	path1Iface    = flag.String("path1-iface", "", "bind path 1 to this network interface, e.g. the cellular hotspot (needs root)")
 	fps           = flag.Int("fps", 10, "Frames per second to send")
 	depthWidth    = flag.Int("depth-width", 320, "Depth frame width")
 	depthHeight   = flag.Int("depth-height", 240, "Depth frame height")
@@ -90,17 +93,16 @@ func main() {
 		Tracer:              qlog.DefaultConnectionTracer,
 	}
 
-	// Create client UDP connection for DialEarly - listen on all interfaces
-	clientConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	// Create the path-0 (main) UDP socket. Optionally bind it to a specific
+	// interface (e.g. Wi-Fi) so path 0 is pinned to that NIC; otherwise listen on
+	// all interfaces and let the OS route.
+	clientConn, err := listenUDP(*path0Iface)
 	if err != nil {
 		log.Fatalf("create client UDP: %v", err)
 	}
 	defer clientConn.Close()
-
-	// Increase the UDP receive buffer to 8MB to reduce packet loss under bursty
-	// depth+RGB traffic (quic-go has no Config field for this; set it on the conn).
-	if err := clientConn.SetReadBuffer(8 * 1024 * 1024); err != nil {
-		log.Printf("warning: set UDP read buffer: %v", err)
+	if *path0Iface != "" {
+		log.Printf("path 0 bound to interface %s", *path0Iface)
 	}
 
 	serverAddrResolved, err := net.ResolveUDPAddr("udp", *serverAddr)
@@ -129,6 +131,18 @@ func main() {
 		addr2, err := net.ResolveUDPAddr("udp", *secondAddr)
 		if err != nil {
 			log.Printf("Warning: cannot resolve second address %s: %v", *secondAddr, err)
+		} else if *path1Iface != "" {
+			// Heterogeneous path: path 1 sends/receives on its own socket bound to
+			// a dedicated interface (e.g. cellular), independent of path 0 (Wi-Fi).
+			pconn, perr := listenUDP(*path1Iface)
+			if perr != nil {
+				log.Printf("Warning: bind path 1 to %s failed: %v", *path1Iface, perr)
+			} else if err := conn.AddPathConn(addr2, 1, pconn); err != nil {
+				log.Printf("Warning: AddPathConn(1) failed: %v", err)
+				pconn.Close()
+			} else {
+				log.Printf("Added path 1 on interface %s: -> %s", *path1Iface, addr2)
+			}
 		} else {
 			if err := conn.AddPath(addr2, 1); err != nil {
 				log.Printf("Warning: AddPath(1) failed: %v", err)
@@ -282,4 +296,33 @@ func encodeToJPEG(data []byte, width, height int, kind handler.FrameKind) ([]byt
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// listenUDP creates a UDP socket with an 8MB receive buffer. If iface is
+// non-empty, the socket is bound to that network interface via SO_BINDTODEVICE
+// (Linux; needs CAP_NET_RAW / root) so its packets egress that interface
+// regardless of the routing table. This is what lets path 0 use Wi-Fi and path 1
+// use the cellular hotspot simultaneously.
+func listenUDP(iface string) (*net.UDPConn, error) {
+	lc := net.ListenConfig{}
+	if iface != "" {
+		lc.Control = func(_, _ string, c syscall.RawConn) error {
+			var serr error
+			if err := c.Control(func(fd uintptr) {
+				serr = syscall.SetsockoptString(int(fd), syscall.SOL_SOCKET, syscall.SO_BINDTODEVICE, iface)
+			}); err != nil {
+				return err
+			}
+			return serr
+		}
+	}
+	pc, err := lc.ListenPacket(context.Background(), "udp4", ":0")
+	if err != nil {
+		return nil, err
+	}
+	uc := pc.(*net.UDPConn)
+	if err := uc.SetReadBuffer(8 * 1024 * 1024); err != nil {
+		log.Printf("warning: set UDP read buffer: %v", err)
+	}
+	return uc, nil
 }

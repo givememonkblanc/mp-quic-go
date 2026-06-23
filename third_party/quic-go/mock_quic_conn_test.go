@@ -841,6 +841,20 @@ func (c *MockQUICConnAddPathCall) DoAndReturn(f func(net.Addr, PathID) error) *M
 	return c
 }
 
+// AddPathConn mocks base method.
+func (m *MockQUICConn) AddPathConn(arg0 net.Addr, arg1 PathID, arg2 net.PacketConn) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AddPathConn", arg0, arg1, arg2)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// AddPathConn indicates an expected call of AddPathConn.
+func (mr *MockQUICConnMockRecorder) AddPathConn(arg0, arg1, arg2 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddPathConn", reflect.TypeOf((*MockQUICConn)(nil).AddPathConn), arg0, arg1, arg2)
+}
+
 // UpdatePathRSSI mocks base method.
 func (m *MockQUICConn) UpdatePathRSSI(arg0 PathID, arg1 int) error {
 	m.ctrl.T.Helper()

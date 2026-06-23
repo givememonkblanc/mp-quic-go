@@ -213,6 +213,12 @@ type Connection interface {
 	// Returns an error if a path with the same ID already exists.
 	AddPath(addr net.Addr, id PathID) error
 
+	// AddPathConn adds a path that sends and receives on its own socket (pconn)
+	// instead of the main connection's socket. Bind pconn to a specific interface
+	// (e.g. SO_BINDTODEVICE) to pin the path to that network interface, enabling
+	// true heterogeneous multipath (e.g. Wi-Fi + cellular to the same server).
+	AddPathConn(addr net.Addr, id PathID, pconn net.PacketConn) error
+
 	// UpdatePathRSSI updates the signal strength metric for the given path.
 	// The RSSI value is used by the PathSelector to make informed path decisions.
 	// This is safe to call from any goroutine.
