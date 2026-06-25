@@ -1,15 +1,34 @@
 #!/usr/bin/env bash
 # Shared helpers for the experiment harness. Source after config.sh.
 
-# Robust SSH to the Jetson. The tailscale path can flap, so callers should keep
-# the per-call work short (push a self-contained script, launch detached, poll).
-jssh() {
-  local tries="${JSSH_TRIES:-8}" i
-  for ((i=1;i<=tries;i++)); do
-    if SSHPASS="$JETSON_PW" sshpass -e ssh \
-        -o StrictHostKeyChecking=accept-new -o ConnectTimeout=6 \
-        -o ServerAliveInterval=4 -o ServerAliveCountMax=2 \
-        "$JETSON_USER@$JETSON_SSH" "$@" 2>/dev/null; then
+# ---------------------------------------------------------------------------
+# SSH to the AMR via a persistent multiplexed master connection.
+#
+# Root cause of the control-channel instability: the solfac AP isolates clients,
+# so tailscale cannot hold a direct LAN path and flaps between a NAT-punched
+# direct path and the DERP relay; each transition kills *new* TCP handshakes
+# (the ssh 255 storms). A single long-lived master connection rides over the
+# stable DERP relay and is reused by every command (no per-call handshake = no
+# failure point), surviving the underlay churn. The experiment data path
+# (AMR -> server) is independent of tailscale, so this only affects control.
+# ---------------------------------------------------------------------------
+JCTL="${JCTL:-$HOME/.ssh/cm/mpq-orin}"
+mkdir -p "$(dirname "$JCTL")" 2>/dev/null; chmod 700 "$(dirname "$JCTL")" 2>/dev/null
+
+_jbase=( -o ControlPath="$JCTL" -o StrictHostKeyChecking=accept-new
+         -o ConnectTimeout=12 -o ServerAliveInterval=8 -o ServerAliveCountMax=4 )
+
+# Ensure the master connection is up (one password handshake, then persists).
+# Running a trivial command with ControlMaster=auto makes that first connection
+# the master; ControlPersist keeps it alive after the command exits. (sshpass is
+# incompatible with `ssh -f -N -M`, so we bootstrap via a real command instead.)
+jconnect() {
+  ssh -O check "${_jbase[@]}" "$JETSON_USER@$JETSON_SSH" 2>/dev/null && return 0
+  local i
+  for ((i=1;i<=8;i++)); do
+    SSHPASS="$JETSON_PW" sshpass -e ssh -o ControlMaster=auto -o ControlPersist=900 \
+        "${_jbase[@]}" "$JETSON_USER@$JETSON_SSH" true 2>/dev/null
+    if ssh -O check "${_jbase[@]}" "$JETSON_USER@$JETSON_SSH" 2>/dev/null; then
       return 0
     fi
     sleep 2
@@ -17,31 +36,43 @@ jssh() {
   return 1
 }
 
-# Push stdin to a file on the Jetson (retry until the bytes land).
-jpush() {  # jpush <remote_path>
-  local remote="$1" data; data="$(cat)"
+# Run a command on the AMR over the master (no handshake / no password).
+jssh() {
+  jconnect || return 1
   local i
-  for ((i=1;i<=10;i++)); do
-    if printf '%s' "$data" | SSHPASS="$JETSON_PW" sshpass -e ssh \
-        -o StrictHostKeyChecking=accept-new -o ConnectTimeout=6 \
+  for ((i=1;i<=3;i++)); do
+    if ssh -o BatchMode=yes "${_jbase[@]}" "$JETSON_USER@$JETSON_SSH" "$@" 2>/dev/null; then
+      return 0
+    fi
+    jconnect || return 1
+  done
+  return 1
+}
+
+# Push stdin to a file on the AMR (retry until the bytes land).
+jpush() {  # jpush <remote_path>
+  local remote="$1" data; data="$(cat)"; jconnect || return 1
+  local i
+  for ((i=1;i<=5;i++)); do
+    if printf '%s' "$data" | ssh -o BatchMode=yes "${_jbase[@]}" \
         "$JETSON_USER@$JETSON_SSH" "cat > '$remote' && test -s '$remote'" 2>/dev/null; then
       return 0
     fi
-    sleep 2
+    jconnect; sleep 1
   done
   return 1
 }
 
 # Fetch a remote file to a local path (retry).
 jpull() {  # jpull <remote_path> <local_path>
-  local remote="$1" local="$2" i
-  for ((i=1;i<=10;i++)); do
-    if SSHPASS="$JETSON_PW" sshpass -e ssh \
-        -o StrictHostKeyChecking=accept-new -o ConnectTimeout=6 \
-        "$JETSON_USER@$JETSON_SSH" "cat '$remote'" > "$local" 2>/dev/null && [[ -s "$local" ]]; then
+  local remote="$1" local="$2"; jconnect || return 1
+  local i
+  for ((i=1;i<=5;i++)); do
+    if ssh -o BatchMode=yes "${_jbase[@]}" "$JETSON_USER@$JETSON_SSH" \
+        "cat '$remote'" > "$local" 2>/dev/null && [[ -s "$local" ]]; then
       return 0
     fi
-    sleep 2
+    jconnect; sleep 1
   done
   return 1
 }

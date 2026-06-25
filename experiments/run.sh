@@ -25,10 +25,12 @@ server_start || { echo "server failed to listen on :4433 (see /tmp/mpq-exp-serve
 log "server listening; results -> $OUT_ROOT"
 
 # Push the runner once per driver invocation.
-jpush "$JETSON_WORK/orin_runner.sh" < "$HERE/lib/orin_runner.sh" || { echo "cannot reach Jetson at $JETSON_SSH"; exit 1; }
+jconnect || { echo "cannot reach Jetson at $JETSON_SSH (ssh master)"; exit 1; }
+jssh "mkdir -p '$JETSON_WORK'" || { echo "cannot reach Jetson at $JETSON_SSH"; exit 1; }
+jpush "$JETSON_WORK/orin_runner.sh" < "$HERE/lib/orin_runner.sh" || { echo "cannot push runner to Jetson"; exit 1; }
 jssh "chmod +x '$JETSON_WORK/orin_runner.sh'" || true
 
-cross_iface() { case "$CROSS_PATH" in secondary) echo "$SECONDARY" ;; *) echo "$PRIMARY" ;; esac; }
+cross_iface() { case "$CROSS_PATH" in secondary) echo "$SECONDARY_IFACE" ;; *) echo "$PRIMARY_IFACE" ;; esac; }
 
 one_run() {  # one_run <group> <scenario> <rep> <local_out_dir>
   local g="$1" sc="$2" r="$3" lout="$4"
@@ -74,8 +76,16 @@ EOF
   local scpu="$lout/server_cpu.csv"
   local sampid; sampid="$(sample_proc "$SERVER_BIN" "$scpu" 1)"
 
-  # launch detached and wait for completion
-  jssh "rm -f '$rout/done'; setsid nohup '$JETSON_WORK/orin_runner.sh' '$rout/env' >'$rout/runner.out' 2>&1 </dev/null & echo started" >/dev/null
+  # launch detached, verifying the runner actually came up (the ssh handshake can
+  # fail mid-flap, leaving nothing started) and retrying the launch if not.
+  local started=0 a
+  for a in 1 2 3 4 5; do
+    jssh "echo '$JETSON_PW' | sudo -S pkill -9 -f bin/jetson 2>/dev/null; rm -f '$rout/done' '$rout/events.log'; setsid nohup '$JETSON_WORK/orin_runner.sh' '$rout/env' >'$rout/runner.out' 2>&1 </dev/null & echo started" >/dev/null
+    sleep 3
+    if jssh "test -s '$rout/events.log' && echo y" 2>/dev/null | grep -q y; then started=1; break; fi
+    log "    (launch attempt $a did not start the runner; retrying)"
+  done
+  [[ $started == 1 ]] || { log "    runner failed to start after retries"; stop_sampler "$sampid"; return 1; }
   local waited=0 maxw=$(( RUN_SECONDS + 40 ))
   while (( waited < maxw )); do
     if jssh "test -f '$rout/done' && echo y" 2>/dev/null | grep -q y; then break; fi
