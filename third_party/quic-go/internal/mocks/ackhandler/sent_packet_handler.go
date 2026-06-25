@@ -192,6 +192,82 @@ func (c *MockSentPacketHandlerOnLossDetectionTimeoutCall) DoAndReturn(f func() e
 	return c
 }
 
+// PtoCount mocks base method.
+func (m *MockSentPacketHandler) PtoCount() uint32 {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PtoCount")
+	ret0, _ := ret[0].(uint32)
+	return ret0
+}
+
+// PtoCount indicates an expected call of PtoCount.
+func (mr *MockSentPacketHandlerMockRecorder) PtoCount() *MockSentPacketHandlerPtoCountCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PtoCount", reflect.TypeOf((*MockSentPacketHandler)(nil).PtoCount))
+	return &MockSentPacketHandlerPtoCountCall{Call: call}
+}
+
+// MockSentPacketHandlerPtoCountCall wrap *gomock.Call
+type MockSentPacketHandlerPtoCountCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockSentPacketHandlerPtoCountCall) Return(arg0 uint32) *MockSentPacketHandlerPtoCountCall {
+	c.Call = c.Call.Return(arg0)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockSentPacketHandlerPtoCountCall) Do(f func() uint32) *MockSentPacketHandlerPtoCountCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockSentPacketHandlerPtoCountCall) DoAndReturn(f func() uint32) *MockSentPacketHandlerPtoCountCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
+// ReinjectOutstanding mocks base method.
+func (m *MockSentPacketHandler) ReinjectOutstanding() int {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReinjectOutstanding")
+	ret0, _ := ret[0].(int)
+	return ret0
+}
+
+// ReinjectOutstanding indicates an expected call of ReinjectOutstanding.
+func (mr *MockSentPacketHandlerMockRecorder) ReinjectOutstanding() *MockSentPacketHandlerReinjectOutstandingCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReinjectOutstanding", reflect.TypeOf((*MockSentPacketHandler)(nil).ReinjectOutstanding))
+	return &MockSentPacketHandlerReinjectOutstandingCall{Call: call}
+}
+
+// MockSentPacketHandlerReinjectOutstandingCall wrap *gomock.Call
+type MockSentPacketHandlerReinjectOutstandingCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockSentPacketHandlerReinjectOutstandingCall) Return(arg0 int) *MockSentPacketHandlerReinjectOutstandingCall {
+	c.Call = c.Call.Return(arg0)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockSentPacketHandlerReinjectOutstandingCall) Do(f func() int) *MockSentPacketHandlerReinjectOutstandingCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockSentPacketHandlerReinjectOutstandingCall) DoAndReturn(f func() int) *MockSentPacketHandlerReinjectOutstandingCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
 // PeekPacketNumber mocks base method.
 func (m *MockSentPacketHandler) PeekPacketNumber(arg0 protocol.EncryptionLevel) (protocol.PacketNumber, protocol.PacketNumberLen) {
 	m.ctrl.T.Helper()
