@@ -215,6 +215,10 @@ type connection struct {
 	pathByAddr    map[string]*PathHandler // remote address -> path handler
 	mainRawConn   rawConn                 // underlying rawConn for creating additional-path sendConns
 	pathRSSIs     map[PathID]int
+	// mainPathReinjected guards the one-shot frame reinjection performed when the
+	// main path loses liveness, so we don't reinject on every send cycle. Reset
+	// once the main path becomes live again.
+	mainPathReinjected bool
 	// Server-side return paths: when a client probes/sends on an alternate path,
 	// its packets arrive on a different local (destination) address. The server's
 	// socket is bound to a wildcard address, so replies would otherwise egress
@@ -744,14 +748,32 @@ func (s *connection) RemovePathHandler(id PathID) {
 	}
 }
 
+// pathLivenessPTOThreshold is the number of consecutive PTOs (without an
+// intervening ack) after which a path is considered to have lost liveness and is
+// reported as unavailable to the selector. A path whose interface goes down stops
+// receiving acks, so its PTO count climbs; excluding it lets the selector fail
+// over to a still-live path (e.g. Wi-Fi -> cellular). A live path resets its PTO
+// count to 0 on the next ack, so it automatically becomes available again.
+const pathLivenessPTOThreshold = 3
+
+// pathAlive reports whether a path is still making forward progress, based on its
+// consecutive-PTO count. A nil handler (path not yet wired up) is treated as live.
+func pathAlive(sph ackhandler.SentPacketHandler) bool {
+	if sph == nil {
+		return true
+	}
+	return sph.PtoCount() < pathLivenessPTOThreshold
+}
+
 // pathStates returns a snapshot of all paths for the selector.
 func (s *connection) pathStates() []PathState {
 	s.pathRSSIsLock.RLock()
 	defer s.pathRSSIsLock.RUnlock()
 
 	states := make([]PathState, 0, 1+len(s.pathHandlers))
-	// Main path (path 0) is always available and validated by the handshake.
-	ps := PathState{ID: 0, Available: true, Validated: true}
+	// Main path (path 0) is validated by the handshake; its availability tracks
+	// liveness so the selector can fail away from it if its interface goes down.
+	ps := PathState{ID: 0, Available: pathAlive(s.sentPacketHandler), Validated: true}
 	if rssi, ok := s.pathRSSIs[0]; ok {
 		ps.RSSI = rssi
 		ps.HasRSSI = true
@@ -759,7 +781,7 @@ func (s *connection) pathStates() []PathState {
 	fillPathMetrics(&ps, s.rttStats, s.sentPacketHandler)
 	states = append(states, ps)
 	for _, h := range s.pathHandlers {
-		ps := PathState{ID: h.ID, Available: true, Validated: true}
+		ps := PathState{ID: h.ID, Available: pathAlive(h.SentPH), Validated: true}
 		if rssi, ok := s.pathRSSIs[h.ID]; ok {
 			ps.RSSI = rssi
 			ps.HasRSSI = true
@@ -2236,13 +2258,35 @@ func (s *connection) applyTransportParameters() {
 func (s *connection) triggerSending(now time.Time) error {
 	s.pacingDeadline = time.Time{}
 
+	// Multipath fail-over: if the main path has lost liveness (its interface went
+	// down), do not pack any (new or retransmitted) data onto it — that would
+	// re-pin frames to a dead path and they'd never reach the peer. Instead release
+	// its still-outstanding frames once, then let the PathSelector's live standby
+	// path carry everything. The main path resumes normal operation as soon as it
+	// is live again (its PTO count resets on the next ack).
+	if s.handshakeConfirmed && len(s.pathHandlers) > 0 && !pathAlive(s.sentPacketHandler) {
+		if !s.mainPathReinjected {
+			n := s.sentPacketHandler.ReinjectOutstanding()
+			s.mainPathReinjected = true
+			s.logger.Infof("main path lost liveness: reinjected %d packet(s), failing over to standby path", n)
+		}
+		return s.sendOnExtraPaths(now)
+	}
+	s.mainPathReinjected = false
+
 	sendMode := s.sentPacketHandler.SendMode(now)
 	//nolint:exhaustive // No need to handle pacing limited here.
 	switch sendMode {
 	case ackhandler.SendAny:
 		return s.sendPackets(now)
 	case ackhandler.SendNone:
-		return nil
+		// The main path cannot send right now (e.g. it is congestion/PTO-stalled
+		// because its interface went down). A standby path chosen by the
+		// PathSelector must still be able to carry traffic — otherwise a dead
+		// primary path stalls the whole connection instead of failing over to a
+		// live path. serviceExtraPaths is a no-op when the selector picks the main
+		// path, so healthy single-path operation is unaffected.
+		return s.serviceExtraPaths(now)
 	case ackhandler.SendPacingLimited:
 		deadline := s.sentPacketHandler.TimeUntilSend()
 		if deadline.IsZero() {
@@ -2282,12 +2326,27 @@ func (s *connection) triggerSending(now time.Time) error {
 		}
 		if s.sendQueue.WouldBlock() {
 			s.scheduleSending()
-			return nil
+			// The main path's send queue is wedged (e.g. its interface went down),
+			// but a live standby path can still carry traffic — let it fail over.
+			return s.serviceExtraPaths(now)
 		}
 		return s.triggerSending(now)
 	default:
 		return fmt.Errorf("BUG: invalid send mode %d", sendMode)
 	}
+}
+
+// serviceExtraPaths gives a PathSelector-chosen standby path a chance to send
+// when the main path itself cannot (because it is congestion/PTO-stalled, e.g.
+// its interface went down). Without this, the whole connection is gated by the
+// main path's send mode and a dead primary path stalls all traffic instead of
+// failing over. It is a no-op before the handshake is confirmed and whenever the
+// selector picks the main path (the common, healthy single-path case).
+func (s *connection) serviceExtraPaths(now time.Time) error {
+	if !s.handshakeConfirmed {
+		return nil
+	}
+	return s.sendOnExtraPaths(now)
 }
 
 func (s *connection) sendPackets(now time.Time) error {
@@ -2677,6 +2736,11 @@ func (s *connection) sendOnPath(ph *PathHandler, now time.Time) error {
 	s.connIDManager.SentPacket()
 
 	ph.SendQ.Send(buf, 0, ecn)
+	// We packed and sent a packet on an extra path; re-trigger the send loop
+	// immediately so a backlog (e.g. frames just reinjected during fail-over) drains
+	// at line rate instead of one packet per wake-up. errNothingToPack returns above
+	// without reaching here, so an idle path does not busy-loop.
+	s.pacingDeadline = deadlineSendImmediately
 	return nil
 }
 

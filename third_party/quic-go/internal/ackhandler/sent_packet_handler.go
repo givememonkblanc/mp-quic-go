@@ -681,6 +681,38 @@ func (h *sentPacketHandler) detectLostPackets(now time.Time, encLevel protocol.E
 	})
 }
 
+// ReinjectOutstanding declares every still-outstanding 1-RTT (application data)
+// packet lost and re-queues its frames for retransmission, returning the number
+// of packets reinjected. It is used by multipath fail-over: when a path loses
+// liveness its in-flight frames would otherwise stay pinned to the dead path
+// until slow, PTO-backed loss detection eventually fires; reinjecting them
+// immediately releases the frames so a live path can retransmit them.
+func (h *sentPacketHandler) ReinjectOutstanding() int {
+	pnSpace := h.appDataPackets
+	if pnSpace == nil {
+		return 0
+	}
+	var lost []protocol.PacketNumber
+	_ = pnSpace.history.Iterate(func(p *packet) (bool, error) {
+		if p.declaredLost || p.skippedPacket {
+			return true, nil
+		}
+		// Skip ack-only packets: there is nothing to retransmit and
+		// queueFramesForRetransmission would panic on an empty frame set.
+		if len(p.Frames) == 0 && len(p.StreamFrames) == 0 {
+			return true, nil
+		}
+		h.removeFromBytesInFlight(p)
+		h.queueFramesForRetransmission(p)
+		lost = append(lost, p.PacketNumber)
+		return true, nil
+	})
+	for _, pn := range lost {
+		pnSpace.history.DeclareLost(pn)
+	}
+	return len(lost)
+}
+
 func (h *sentPacketHandler) OnLossDetectionTimeout() error {
 	defer h.setLossDetectionTimer()
 	earliestLossTime, encLevel := h.getLossTimeAndSpace()
@@ -768,6 +800,14 @@ func (h *sentPacketHandler) LossRate() float64 {
 		return 0
 	}
 	return float64(h.appDataLost) / float64(h.appDataSent)
+}
+
+// PtoCount returns the number of consecutive PTOs fired without an intervening
+// ack (see the SentPacketHandler interface). It is reset to 0 in setLossDetectionTimer
+// whenever bytes are newly acked, so a sustained non-zero value means the path
+// has stopped making forward progress.
+func (h *sentPacketHandler) PtoCount() uint32 {
+	return h.ptoCount
 }
 
 func (h *sentPacketHandler) ECNMode(isShortHeaderPacket bool) protocol.ECN {

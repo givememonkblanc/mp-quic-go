@@ -35,6 +35,19 @@ type SentPacketHandler interface {
 
 	GetLossDetectionTimeout() time.Time
 	OnLossDetectionTimeout() error
+
+	// PtoCount returns the number of consecutive PTOs that have fired without an
+	// intervening ack. It resets to 0 whenever an ack-eliciting packet is acked.
+	// A persistently elevated count signals the path is no longer making progress
+	// (e.g. its interface went down), which the multipath selector uses for
+	// liveness-based failover.
+	PtoCount() uint32
+
+	// ReinjectOutstanding declares all still-outstanding 1-RTT packets lost and
+	// re-queues their frames for retransmission, returning the count reinjected.
+	// Used for multipath fail-over to release frames pinned to a dead path so a
+	// live path can carry them without waiting for PTO-driven loss detection.
+	ReinjectOutstanding() int
 }
 
 type sentPacketTracker interface {
