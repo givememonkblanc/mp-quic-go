@@ -11,7 +11,7 @@ cd "$HERE/.."
 source "$HERE/config.sh"
 source "$HERE/lib/common.sh"
 
-GSEL="$(IFS=,; echo "${GROUPS[*]}")"
+GSEL="$(IFS=,; echo "${EXP_GROUPS[*]}")"
 SSEL="$(IFS=,; echo "${SCENARIOS[*]}")"
 while getopts "g:s:n:" o; do case "$o" in
   g) GSEL="$OPTARG" ;; s) SSEL="$OPTARG" ;; n) REPEATS="$OPTARG" ;;

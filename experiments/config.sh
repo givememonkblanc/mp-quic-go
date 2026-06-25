@@ -49,7 +49,7 @@ BACKUP_PROBE="${BACKUP_PROBE:-1s}"
 #   g4_mp_failure       MP-QUIC, failure-based backup (rssi-primary + PTO liveness)
 #   g5_mp_rssi_aware    MP-QUIC, proposed RSSI-aware scheduler
 # ---------------------------------------------------------------------------
-GROUPS=(g1_sp_wifi g2_sp_migrate g3_mp_default g4_mp_failure g5_mp_rssi_aware)
+EXP_GROUPS=(g1_sp_wifi g2_sp_migrate g3_mp_default g4_mp_failure g5_mp_rssi_aware)
 
 group_flags() {
   local g="$1"
