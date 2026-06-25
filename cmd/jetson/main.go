@@ -11,7 +11,9 @@ import (
 	"image/jpeg"
 	"io"
 	"log"
+	"math"
 	"net"
+	"os"
 	"sync"
 	"syscall"
 	"time"
@@ -23,6 +25,7 @@ import (
 	"mp-quic-go/internal/mpquic/pqi"
 	"mp-quic-go/internal/mpquic/scheduler"
 	"mp-quic-go/internal/mpquic/session"
+	"mp-quic-go/internal/rssi"
 	"mp-quic-go/pkg/protocols"
 )
 
@@ -36,7 +39,13 @@ var (
 	depthHeight   = flag.Int("depth-height", 240, "Depth frame height")
 	rgbWidth      = flag.Int("rgb-width", 640, "RGB frame width")
 	rgbHeight     = flag.Int("rgb-height", 480, "RGB frame height")
-	schedName     = flag.String("scheduler", "rssi", "path scheduler: pqi|min-rtt|round-robin|rssi")
+	schedName     = flag.String("scheduler", "rssi", "path scheduler: pqi|min-rtt|round-robin|rssi|rssi-aware")
+
+	// RSSI-aware scheduling: locally sample Wi-Fi RSSI and feed it to the scheduler.
+	rssiCollect  = flag.Bool("rssi-collect", false, "sample Wi-Fi RSSI via `iw` on path0-iface and feed the scheduler (needed for rssi-aware)")
+	rssiInterval = flag.Duration("rssi-interval", 250*time.Millisecond, "RSSI sampling interval")
+	rssiAlpha    = flag.Float64("rssi-alpha", 0.3, "EWMA smoothing factor for RSSI")
+	backupProbe  = flag.Duration("backup-probe", 0, "keep-warm probe interval for the 5G backup path (0=off, e.g. 1s)")
 
 	// PQI scheduler parameters (reported in the paper; tunable for reproducibility).
 	pqiAlpha  = flag.Float64("pqi-alpha", 0.5, "PQI cost weight for RTT")
@@ -48,6 +57,10 @@ var (
 	pqiMargin = flag.Float64("pqi-margin", 10, "PQI handover safety margin")
 	pqiStable = flag.Duration("pqi-stable", 500*time.Millisecond, "PQI stability interval")
 )
+
+// frameMetrics enables machine-parseable per-frame latency records (gated by env
+// so production runs stay quiet); used by the experiment harness.
+var frameMetrics = os.Getenv("MPQUIC_FRAME_LOG") != ""
 
 func main() {
 	flag.Parse()
@@ -90,6 +103,7 @@ func main() {
 		KeepAlivePeriod:     10 * time.Second,
 		InitialMaxPathID:    1,
 		PathSelector:        session.NewQuicPathSelector(sched),
+		BackupProbeInterval: *backupProbe,
 		Tracer:              qlog.DefaultConnectionTracer,
 	}
 
@@ -150,6 +164,36 @@ func main() {
 				log.Printf("Added path 1: -> %s", addr2)
 			}
 		}
+	}
+
+	// RSSI collector: locally sample the Wi-Fi interface's RSSI and feed the
+	// EWMA to the scheduler (path 0 = Wi-Fi primary). Required for the rssi-aware
+	// scheduler; harmless for the others.
+	if *rssiCollect && *path0Iface != "" {
+		coll := rssi.NewLocalCollector(*path0Iface, *rssiAlpha)
+		metricsOn := os.Getenv("MPQUIC_SCHED_LOG") != ""
+		go func() {
+			ticker := time.NewTicker(*rssiInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					s := coll.Sample(ctx)
+					if !s.Valid {
+						continue
+					}
+					if err := conn.UpdatePathRSSI(0, int(math.Round(s.EWMA))); err != nil {
+						log.Printf("UpdatePathRSSI: %v", err)
+					}
+					if metricsOn {
+						log.Printf("RSSI ts=%d raw=%d ewma=%.1f", s.Time.UnixMilli(), s.Raw, s.EWMA)
+					}
+				}
+			}
+		}()
+		log.Printf("RSSI collector started on %s (interval=%s, alpha=%.2f)", *path0Iface, *rssiInterval, *rssiAlpha)
 	}
 
 	log.Printf("Creating camera provider...")
@@ -236,6 +280,7 @@ func sendStream(ctx context.Context, conn quic.Connection, st handler.StreamType
 		payload[8] = byte(st)
 		copy(payload[9:], frameData)
 
+		t0 := time.Now()
 		if _, err := stream.Write(payload); err != nil {
 			log.Printf("[%s] write error: %v", name, err)
 			return
@@ -246,9 +291,15 @@ func sendStream(ctx context.Context, conn quic.Connection, st handler.StreamType
 			log.Printf("[%s] ack error: %v", name, err)
 			return
 		}
+		lat := time.Since(t0)
 
 		serial++
 		log.Printf("[%s] sent #%d (%d bytes)", name, serial, len(frameData))
+		if frameMetrics {
+			// Machine-parseable per-frame record: send->ack latency and wall-clock
+			// send time, for the experiment harness (latency, jitter, throughput).
+			log.Printf("[%s] FRAME serial=%d bytes=%d lat_ms=%.2f ts=%d", name, serial, len(frameData), float64(lat.Microseconds())/1000.0, t0.UnixMilli())
+		}
 		time.Sleep(interval)
 	}
 }

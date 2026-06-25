@@ -125,6 +125,7 @@ func populateConfig(config *Config) *Config {
 		Allow0RTT:                      config.Allow0RTT,
 		InitialMaxPathID:               config.InitialMaxPathID,
 		PathSelector:                   config.PathSelector,
+		BackupProbeInterval:            config.BackupProbeInterval,
 		Tracer:                         config.Tracer,
 	}
 }

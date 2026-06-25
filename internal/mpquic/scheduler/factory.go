@@ -8,6 +8,7 @@ const (
 	NameMinRTT     = "min-rtt"
 	NameRoundRobin = "round-robin"
 	NameRSSI       = "rssi"
+	NameRSSIAware  = "rssi-aware"
 )
 
 // New constructs a scheduler by name. This lets the same binary run different
@@ -23,8 +24,10 @@ func New(name string) (Scheduler, error) {
 		return NewRoundRobinScheduler(), nil
 	case NameRSSI:
 		return NewPrimaryPathScheduler(), nil
+	case NameRSSIAware:
+		return NewRSSIAwareScheduler(DefaultRSSIAwareConfig()), nil
 	default:
-		return nil, fmt.Errorf("unknown scheduler %q (want %s|%s|%s|%s)",
-			name, NamePQI, NameMinRTT, NameRoundRobin, NameRSSI)
+		return nil, fmt.Errorf("unknown scheduler %q (want %s|%s|%s|%s|%s)",
+			name, NamePQI, NameMinRTT, NameRoundRobin, NameRSSI, NameRSSIAware)
 	}
 }
