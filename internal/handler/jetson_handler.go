@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -53,21 +55,34 @@ func (h *JetsonHandler) cleanupOldFrames(dir string) error {
 		return err
 	}
 
-	files := make([]string, 0)
+	// Frames are named "<serial>.jpg". Sort by the NUMERIC serial, not lexically:
+	// without zero-padding, a string sort orders "1000" < "999" (because '1'<'9'),
+	// so it would delete the newest high-serial frames and keep stale low-serial
+	// ones — the bug that left old footage on disk while new frames vanished.
+	type fileSerial struct {
+		name   string
+		serial int
+	}
+	files := make([]fileSerial, 0, len(entries))
 	for _, e := range entries {
-		if !e.IsDir() && filepath.Ext(e.Name()) == ".jpg" {
-			files = append(files, e.Name())
+		if e.IsDir() || filepath.Ext(e.Name()) != ".jpg" {
+			continue
 		}
+		n, err := strconv.Atoi(strings.TrimSuffix(e.Name(), ".jpg"))
+		if err != nil {
+			continue
+		}
+		files = append(files, fileSerial{e.Name(), n})
 	}
 
 	if len(files) <= maxFrames {
 		return nil
 	}
 
-	sort.Strings(files)
+	sort.Slice(files, func(i, j int) bool { return files[i].serial < files[j].serial })
 
 	for i := 0; i < len(files)-maxFrames; i++ {
-		os.Remove(filepath.Join(dir, files[i]))
+		os.Remove(filepath.Join(dir, files[i].name))
 	}
 
 	return nil
