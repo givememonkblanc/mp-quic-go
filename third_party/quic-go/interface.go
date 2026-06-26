@@ -361,7 +361,12 @@ type Config struct {
 	// PathSelector is used for multipath QUIC to decide which path to send packets on.
 	// If nil, the connection behaves as a regular single-path QUIC connection.
 	PathSelector PathSelector
-	Tracer       func(context.Context, logging.Perspective, ConnectionID) *logging.ConnectionTracer
+	// BackupProbeInterval, when > 0, makes the connection periodically send an
+	// ack-eliciting probe (PING) on every non-primary path even while idle. This
+	// keeps a standby path (e.g. 5G backup) validated and its RTT fresh so a
+	// fail-over to it is fast. Has no effect without multipath paths.
+	BackupProbeInterval time.Duration
+	Tracer              func(context.Context, logging.Perspective, ConnectionID) *logging.ConnectionTracer
 }
 
 // ClientHelloInfo contains information about an incoming connection attempt.

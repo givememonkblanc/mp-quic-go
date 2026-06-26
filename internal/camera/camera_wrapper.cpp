@@ -96,6 +96,13 @@ cam_handle_t cam_open(int index, int is_depth) {
                      index, ctx->width, ctx->height);
     }
 
+    // Keep only the most recent frame in the driver/OpenCV buffer. The consumer
+    // (ack-synchronous streaming) is much slower than the 30 fps camera, so with
+    // the default multi-frame buffer each read() returns an old, queued frame and
+    // the transmitted video lags further and further behind real time. With a
+    // 1-frame buffer every read() returns the latest captured frame.
+    cap->set(cv::CAP_PROP_BUFFERSIZE, 1.0);
+
     ctx->cap = cap;
 
     // Warm-up: grab a few frames to stabilize

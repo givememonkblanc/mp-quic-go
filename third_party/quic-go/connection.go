@@ -219,6 +219,9 @@ type connection struct {
 	// main path loses liveness, so we don't reinject on every send cycle. Reset
 	// once the main path becomes live again.
 	mainPathReinjected bool
+	// lastBackupProbe is when we last sent a keep-warm probe on the standby
+	// path(s); see Config.BackupProbeInterval.
+	lastBackupProbe time.Time
 	// Server-side return paths: when a client probes/sends on an alternate path,
 	// its packets arrive on a different local (destination) address. The server's
 	// socket is bound to a wildcard address, so replies would otherwise egress
@@ -989,6 +992,19 @@ runLoop:
 		if err := s.triggerSending(now); err != nil {
 			s.closeLocal(err)
 		}
+		// Keep standby paths warm: once the regular send is done (framer drained),
+		// send an ack-eliciting PING on each extra path that is due a probe. This
+		// validates the backup (e.g. 5G) and refreshes its RTT without stealing
+		// stream data, so a later fail-over is fast (Config.BackupProbeInterval).
+		if pt := s.nextBackupProbeTime(); !pt.IsZero() && !now.Before(pt) {
+			s.lastBackupProbe = now
+			for _, ph := range s.pathHandlers {
+				s.framer.QueueControlFrame(&wire.PingFrame{})
+				if err := s.sendOnPath(ph, now); err != nil {
+					s.closeLocal(err)
+				}
+			}
+		}
 		if s.sendQueue.WouldBlock() {
 			sendQueueAvailable = s.sendQueue.Available()
 		} else {
@@ -1052,6 +1068,15 @@ func (s *connection) nextKeepAliveTime() time.Time {
 	return s.lastPacketReceivedTime.Add(keepAliveInterval)
 }
 
+// nextBackupProbeTime is when the next standby-path keep-warm probe is due, or
+// zero if backup probing is disabled or there are no extra paths.
+func (s *connection) nextBackupProbeTime() time.Time {
+	if s.config.BackupProbeInterval <= 0 || len(s.pathHandlers) == 0 || !s.handshakeConfirmed {
+		return time.Time{}
+	}
+	return s.lastBackupProbe.Add(s.config.BackupProbeInterval)
+}
+
 func (s *connection) maybeResetTimer() {
 	var deadline time.Time
 	if !s.handshakeComplete {
@@ -1065,6 +1090,11 @@ func (s *connection) maybeResetTimer() {
 		} else {
 			deadline = s.nextIdleTimeoutTime()
 		}
+	}
+
+	// Wake the loop in time to probe standby paths (Config.BackupProbeInterval).
+	if pt := s.nextBackupProbeTime(); !pt.IsZero() && (deadline.IsZero() || pt.Before(deadline)) {
+		deadline = pt
 	}
 
 	// Compute the minimum alarm timeout across all paths

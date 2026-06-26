@@ -30,3 +30,4 @@
 # Claude Code local settings
 .claude/settings.local.json
 MPQUIC_SUMMARY.md
+experiments/results/
