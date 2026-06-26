@@ -90,7 +90,12 @@ case "$SCENARIO" in
     sleep "$FAIL_AT"
     ev wifi_down
     [[ "$USE_RSSI" == 1 && -n "$RSSI_FILE" ]] && echo "-100" > "$RSSI_FILE"
-    sudoq nmcli device disconnect "$PRIMARY"
+    # Simulate sudden Wi-Fi failure by blackholing the Wi-Fi path (100% loss)
+    # rather than downing the interface: this keeps the IP/route/tailscale and the
+    # driver intact (downing the iface disrupts control + hangs nmcli reconnect),
+    # while the QUIC path still dies (PTO liveness) and fails over to 5G.
+    sudoq tc qdisc add dev "$PRIMARY" root netem loss 100% 2>/dev/null \
+      || sudoq tc qdisc change dev "$PRIMARY" root netem loss 100%
     # migrate group: detect the stall and re-establish the single path on 5G
     if [[ "$IS_MIGRATE" == 1 ]]; then
       last=$(grep -c "sent #" "$OUT/client.log")
@@ -114,7 +119,7 @@ case "$SCENARIO" in
     rem=$(( RESTORE_AT - FAIL_AT )); [[ $rem -gt 0 ]] && sleep "$rem"
     ev wifi_up
     [[ "$USE_RSSI" == 1 && -n "$RSSI_FILE" ]] && echo "${GRAD_RSSI_START}" > "$RSSI_FILE"
-    sudoq nmcli device connect "$PRIMARY"
+    sudoq tc qdisc del dev "$PRIMARY" root 2>/dev/null
     rem=$(( RUN_SECONDS - RESTORE_AT )); [[ $rem -gt 0 ]] && sleep "$rem" ;;
 
   5_crosstraffic)
